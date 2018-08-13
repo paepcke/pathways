@@ -18,8 +18,13 @@ class TSNECourseVisualizer(object):
     '''
     classdocs
     '''
+    # File with a bulk of explict mappings from course name to acadGrp:
     course2school_map_file  = '/Users/paepcke/Project/Carta/Data/CartaData/ExploreCourses/courseNameAcademicOrg.csv'
+    # Dict for the explicit course --> academicGroup map in course2school_map_file:
+    course_school_dict = {}
+
     acad_grp_name_root = {
+        'AFRICA' : 'H&S',
         'AMSTUD' : 'H&S',
         'ANTHRO' : 'H&S',
         'ART' : 'H&S',
@@ -32,7 +37,9 @@ class TSNECourseVisualizer(object):
         'BIOPH' : 'H&S',
         'BIO' : 'H&S',
         'BIOS' : 'MED',
+        'CEE' : 'ENGR',                
         'CHIN' : 'H&S',
+        'CHICAN' : 'H&S',
         'CLASSGEN' : 'H&S',
         'CLASSIC' : 'H&S',
         'CME' : 'ENGR',
@@ -64,14 +71,19 @@ class TSNECourseVisualizer(object):
         'ILAC' : 'H&S',
         'INTN' : 'H&S',
         'ITAL' : 'H&S',
+        'JAP' : 'H&S',
+        'JEWISH' : 'H&S',
         'KOR' : 'H&S',
         'LAW' : 'LAW',
         'MATH' : 'H&S',
         'MED' : 'H&S',
         'MS&E' : 'ENGR',
+        'MGTECON' : 'GSB',
+        'ORTH' : 'MED',        
         'NATIVE' : 'H&S',
         'OIT' : 'GSB',
         'OSP' : 'VPUE',
+        'OUTDOOR' : 'MED',   # Also in H&S
         'PEDS' : 'MED',
         'PHIL' : 'H&S',
         'PHOTON' : 'H&S',
@@ -79,19 +91,93 @@ class TSNECourseVisualizer(object):
         'POLISC' : 'H&S',
         'PWR' : 'H&S',
         'RELIG' : 'H&S',
+        'SCCM' : "H&S",
         'SINY' : 'VPUE',
         'SLAVIC' : 'H&S',
         'SOC' : 'H&S',
         'SPECLAN' : 'H&S',
         'SURG' : 'MED',
         'TAPS' : 'H&S'
-        }
+        }    
+    
+    
+#******************************* Start delete    
+
+#     acad_grp_name_root = {
+#         'AMSTUD' : 'H&S',
+#         'ANTHRO' : 'H&S',
+#         'ART' : 'H&S',
+#         'ATHLETIC' : 'ATH',  # officially: Health and Human Performance
+#         'BIOC' : 'MED',
+#         'BIODS' : 'MED',
+#         'BIOE' : 'ENGR',
+#         'BIOH' : 'H&S',
+#         'BIOM' : 'MED',
+#         'BIOPH' : 'H&S',
+#         'BIO' : 'H&S',
+#         'BIOS' : 'MED',
+#         'CEE' : 'ENGR',        
+#         'CHIN' : 'H&S',
+#         'CLASSGEN' : 'H&S',
+#         'CLASSIC' : 'H&S',
+#         'CME' : 'ENGR',
+#         'COMPLIT' : 'H&S',
+#         'CS' : 'ENGR',
+#         'CSRE' : 'H&S',
+#         'CTL' : 'H&S',
+#         'DRAMA' : 'H&S',
+#         'EARTH' : 'EARTH',
+#         'EAST' : 'H&S',
+#         'EDUC' : 'EDUC',
+#         'EESOR' : 'ENGR',
+#         'EEES'  : 'EARTH',
+#         'EESS'  : 'EARTH',
+#         'EES'   : 'ENGR',
+#         'ESS'  : 'EARTH',        
+#         'EE'    : 'ENGR',
+#         'ENERGY' : 'ENGR',
+#         'ENGLISH' : 'H&S',
+#         'ETHI' : 'H&S',
+#         'FAMMED' : 'MED',
+#         'FEMGEN' : 'H&S',
+#         'FINAN' : 'GSB',
+#         'FREN' : 'H&S',
+#         'GER' : 'H&S',
+#         'GES' : 'H&S',
+#         'GSBGEN' : 'EDUC',
+#         'HISTORY' : 'H&S',
+#         'HPS' : 'H&S',
+#         'ILAC' : 'H&S',
+#         'INTN' : 'H&S',
+#         'ITAL' : 'H&S',
+#         'KOR' : 'H&S',
+#         'LAW' : 'LAW',
+#         'MATH' : 'H&S',
+#         'MED' : 'H&S',
+#         'MS&E' : 'ENGR',
+#         'NATIVE' : 'H&S',
+#         'OIT' : 'GSB',
+#         'OSP' : 'VPUE',
+#         'PEDS' : 'MED',
+#         'PHIL' : 'H&S',
+#         'PHOTON' : 'H&S',
+#         'PHYSICS' : 'H&S',
+#         'POLISC' : 'H&S',
+#         'PWR' : 'H&S',
+#         'RELIG' : 'H&S',
+#         'SINY' : 'VPUE',
+#         'SLAVIC' : 'H&S',
+#         'SOC' : 'H&S',
+#         'SPECLAN' : 'H&S',
+#         'SURG' : 'MED',
+#         'TAPS' : 'H&S'
+#         }
+#******************************* End delete
 
     # Assign each major academic group to a color
     # For color choices see https://matplotlib.org/users/colors.html
     # 'tab:xxx' stands for Tableau. These are Tableau recommended
     # categorical colors:
-    course_school_dict = {}
     course_color_dict  = {'ENGR' : 'tab:blue',
                           'GSB'  : 'tab:pink',
                           'H&S'  : 'tab:green',
@@ -110,14 +196,13 @@ class TSNECourseVisualizer(object):
         '''
         Constructor
         '''
-      
         # Read the mapping from course name to academic organization 
         # roughly (a.k.a. school):
         with open(TSNECourseVisualizer.course2school_map_file, 'r') as fd:
             reader = csv.reader(fd)
             for (course_name, school_name) in reader:
                 TSNECourseVisualizer.course_school_dict[course_name] = school_name
-
+                      
         course_name_list = self.create_course_name_list(course_vectors_model)                
         # Map each course to the Tableau categorical color of its school (academicGroup):
         color_map = self.get_acad_grp_to_color_map(course_name_list)
@@ -174,18 +259,28 @@ class TSNECourseVisualizer(object):
         color_map = {}
         for course_name in course_name_list:
             try:
+                # First try the explicit course-->acadGrp map:
                 school = TSNECourseVisualizer.course_school_dict[course_name]
             except KeyError:
-                school = self.group_name_from_course_name(course_name)
+                try:
+                    # Didn't find a mapping. Use heuristic:
+                    school = self.group_name_from_course_name(course_name)
+                except KeyError:
+                    raise ValueError("Don't know to which academic group (~=school) '%s' belongs." % course_name)
             try:
+                # Got the academic group; get a color assignment:
                 color_map[course_name] = TSNECourseVisualizer.course_color_dict[school]
             except KeyError:
-                raise ValueError("Don't know to which academic group (~=school) '%s' belongs." % course_name)
+                raise ValueError("Don't have color assignment for course/acadGrp %s/%s." % (course_name, school))
         return color_map
 
 
     def group_name_from_course_name(self, course_name):
                 
+        if course_name.startswith('AA'):
+            return TSNECourseVisualizer.acad_grp_name_root['AA']
+        if course_name.startswith('AFRICA'):
+            return TSNECourseVisualizer.acad_grp_name_root['AFRICA']
         if course_name.startswith('AMSTUD'):
             return TSNECourseVisualizer.acad_grp_name_root['AMSTUD']
         elif course_name.startswith('ANTHRO'):
@@ -210,8 +305,12 @@ class TSNECourseVisualizer(object):
             return TSNECourseVisualizer.acad_grp_name_root['BIO']
         elif course_name.startswith('BIOS'):
             return TSNECourseVisualizer.acad_grp_name_root['BIOS']
+        elif course_name.startswith('CEE'):
+            return TSNECourseVisualizer.acad_grp_name_root['CEE']
         elif course_name.startswith('CHIN'):
             return TSNECourseVisualizer.acad_grp_name_root['CHIN']
+        elif course_name.startswith('CHICAN'):
+            return TSNECourseVisualizer.acad_grp_name_root['CHICAN']
         elif course_name.startswith('CLASSGEN'):
             return TSNECourseVisualizer.acad_grp_name_root['CLASSGEN']
         elif course_name.startswith('CLASSIC'):
@@ -240,8 +339,10 @@ class TSNECourseVisualizer(object):
             return TSNECourseVisualizer.acad_grp_name_root['EEES']
         elif course_name.startswith('EESS'):
             return TSNECourseVisualizer.acad_grp_name_root['EESS']
-        elif course_name.startswith('ESE'):
+        elif course_name.startswith('EES'):
             return TSNECourseVisualizer.acad_grp_name_root['EES']
+        elif course_name.startswith('ESS'):
+            return TSNECourseVisualizer.acad_grp_name_root['ESS']
         elif course_name.startswith('EE'):
             return TSNECourseVisualizer.acad_grp_name_root['EE']
         elif course_name.startswith('ENERGY'):
@@ -274,15 +375,23 @@ class TSNECourseVisualizer(object):
             return TSNECourseVisualizer.acad_grp_name_root['INTN']
         elif course_name.startswith('ITAL'):
             return TSNECourseVisualizer.acad_grp_name_root['ITAL']
+        elif course_name.startswith('JAP'):
+            return TSNECourseVisualizer.acad_grp_name_root['JAP']
         elif course_name.startswith('KOR'):
             return TSNECourseVisualizer.acad_grp_name_root['KOR']
+        elif course_name.startswith('JEWISH'):
+            return TSNECourseVisualizer.acad_grp_name_root['JEWISH']
         elif course_name.startswith('LAW'):
             return TSNECourseVisualizer.acad_grp_name_root['LAW']
         elif course_name.startswith('MATH'):
             return TSNECourseVisualizer.acad_grp_name_root['MATH']
         elif course_name.startswith('MED'):
             return TSNECourseVisualizer.acad_grp_name_root['MED']
+        elif course_name.startswith('MGTECON'):
+            return TSNECourseVisualizer.acad_grp_name_root['MGTECON']
         elif course_name.startswith('MS&E'):
+            return TSNECourseVisualizer.acad_grp_name_root['MS&E']
+        elif course_name.startswith('ME'):
             return TSNECourseVisualizer.acad_grp_name_root['MS&E']
         elif course_name.startswith('NATIVE'):
             return TSNECourseVisualizer.acad_grp_name_root['NATIVE']
@@ -290,6 +399,10 @@ class TSNECourseVisualizer(object):
             return TSNECourseVisualizer.acad_grp_name_root['OIT']
         elif course_name.startswith('OSP'):
             return TSNECourseVisualizer.acad_grp_name_root['OSP']
+        elif course_name.startswith('ORTH'):
+            return TSNECourseVisualizer.acad_grp_name_root['ORTH']
+        elif course_name.startswith('OUTDOOR'):
+            return TSNECourseVisualizer.acad_grp_name_root['OUTDOOR']
         elif course_name.startswith('PEDS'):
             return TSNECourseVisualizer.acad_grp_name_root['PEDS']
         elif course_name.startswith('PHIL'):
@@ -306,6 +419,8 @@ class TSNECourseVisualizer(object):
             return TSNECourseVisualizer.acad_grp_name_root['RELIG']
         elif course_name.startswith('SINY'):
             return TSNECourseVisualizer.acad_grp_name_root['SINY']
+        elif course_name.startswith('SCCM'):
+            return TSNECourseVisualizer.acad_grp_name_root['SCCM']
         elif course_name.startswith('SLAVIC'):
             return TSNECourseVisualizer.acad_grp_name_root['SLAVIC']
         elif course_name.startswith('SOC'):
