@@ -87,6 +87,9 @@ class CourseVectorsCreator(gensim.models.Word2Vec):
     def wv(self):
         return self.word2vec_model.wv
             
+    @property
+    def vector_size(self):
+        return self.word2vec_model.vector_size
 
     #-----------------------------
     # find_courses_with_similar_context
