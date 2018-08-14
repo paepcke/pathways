@@ -8,6 +8,7 @@ from logging import warn as logWarn
 import logging
 import re
 import os
+import numpy as np
 
 from MulticoreTSNE import  MulticoreTSNE as TSNE
 
@@ -225,20 +226,6 @@ class TSNECourseVisualizer(object):
         'VPTL' :  colors['darkgray'].hex_format(), 
         'CSP'  :  colors['darkgray'].hex_format(), 
         }
-#     course_color_dict  = {'ENGR' : 'tab:blue',
-#                           'GSB'  : 'tab:pink',
-#                           'H&S'  : 'tab:green',
-#                           'MED'  : 'tab:red',
-#                           'UG'   : 'tab:purple',
-#                           'EARTH': 'tab:brown',
-#                           'EDUC' : 'tab:cyan',
-#                           'VPUE' : 'tab:orange',
-#                           'ATH'  : 'tab:olive',
-#                           'LAW'  : 'tab:gray',
-#                           'VPSA' : 'tab:gray',
-#                           'VPTL' : 'tab:gray',
-#                           'CSP'  : 'tab:gray',  # Continuous education; MLA courses
-#                           }
 
     def __init__(self, course_vectors_model):
         '''
@@ -270,8 +257,9 @@ class TSNECourseVisualizer(object):
         '''
         
         course_names = course_vectors_model.wv.vocab.keys()
+        return course_names
         # Remove '\N' entries:
-        return list(filter(lambda name: name != '\N', course_names))
+        # return list(filter(lambda name: name != '\N', course_names))
         
     def plot_tsne_clusters(self, course_vector_model, color_map, course_name_seq):
         '''
@@ -279,12 +267,19 @@ class TSNECourseVisualizer(object):
         '''
         
         #**************
-#         logInfo("Testing course names...")
-#         for course_name in course_name_seq:
-#             group_name = self.group_name_from_course_name(course_name)
-# 
-#         logInfo("Done testing course names.")
+        # logInfo("Testing course names...")
+        # for course_name in course_name_seq:
+        #     group_name = self.group_name_from_course_name(course_name)
+        #
+        # logInfo("Done testing course names.")
         #**************        
+        
+        labels_course_names = []
+        tokens_vectors      = []
+        
+        for course_name in course_vector_model.wv.vocab:
+            tokens_vectors.append(course_vector_model[course_name])
+            labels_course_names.append(course_name)
         
         word_vectors = course_vector_model.wv.vectors
         
@@ -297,7 +292,10 @@ class TSNECourseVisualizer(object):
                           n_jobs=4) # n_jobs is part of the MulticoreTSNE
         logInfo('Done mapping %s word vector dimensions to 2D.' % course_vector_model.vector_size)
         logInfo('Fitting course vectors to t_sne model...')
-        new_values = tsne_model.fit_transform(word_vectors)
+        #*******new_values = tsne_model.fit_transform(tokens_vectors)
+        np_tokens_vectors = np.array(tokens_vectors)
+        new_values = tsne_model.fit_transform(np_tokens_vectors[0:1000,])
+        #****
         logInfo('Done fitting course vectors to t_sne model.')
     
         x = []
@@ -306,11 +304,11 @@ class TSNECourseVisualizer(object):
             x.append(value[0])
             y.append(value[1])
             
-        plt.figure(figsize=(16, 16))
+        fig = plt.figure(figsize=(16, 16))
         logInfo('Populating  t_sne plot...') 
         for i in range(len(x)):
             try:
-                course_name = course_name_seq[i]
+                course_name = labels_course_names[i]
             except IndexError:
                 logWarn("Ran out of course names at i=%s" % i)
                 continue
@@ -320,14 +318,24 @@ class TSNECourseVisualizer(object):
             if acad_group == 'H&S':
                 continue
             #***************
-            plt.scatter(x[i],y[i], c=color_map[course_name])
+            #***************
+            # Thin out the chart for test speed:
+            if acad_group != 'MED':
+                continue
+            #***************
+            
+            #*****plt.scatter(x[i],y[i], c=color_map[course_name])
+            plt.scatter(x[i],y[i], c=color_map[course_name], picker=5, label=labels_course_names[i])
             #plt.annotate(labels[i],
             #             xy=(x[i], y[i]),
             #             xytext=(5, 2),
             #             textcoords='offset points',
             #             ha='right',
             #             va='bottom')
-        logInfo('Done populating  t_sne plot.') 
+        logInfo('Done populating  t_sne plot.')
+        #***************
+        fig.canvas.mpl_connect('pick_event', onpick)
+        #***************
         plt.show()
         return tsne_model
 
@@ -597,7 +605,10 @@ class TSNECourseVisualizer(object):
             else:
                 raise ValueError('Could not find subject for %s' % course_name)
         
-    
+#***************
+def onpick(event):
+    print("Called: %s" % (event.artist.get_label()))
+#***************   
 if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
     vector_creator.load_word2vec_model(os.path.join(os.getenv('HOME'), 'Project/Pathways/Data/Course2VecData/course2vecModelWin10.model'))
