@@ -302,8 +302,8 @@ class TSNECourseVisualizer(object):
         logInfo('Fitting course vectors to t_sne model...')
         #*******
         np_tokens_vectors = np.array(tokens_vectors)
-        new_values = tsne_model.fit_transform(np_tokens_vectors)
-        #new_values = tsne_model.fit_transform(np_tokens_vectors[0:500,])
+        #*****new_values = tsne_model.fit_transform(np_tokens_vectors)
+        new_values = tsne_model.fit_transform(np_tokens_vectors[0:500,])
         #****
         logInfo('Done fitting course vectors to t_sne model.')
     
@@ -335,16 +335,17 @@ class TSNECourseVisualizer(object):
             #***************
             #***************
             # Thin out the chart for test speed:
-            #if not (acad_group == 'MED' or acad_group == 'ENGR'):
-            #    continue
+            if not (acad_group == 'MED' or acad_group == 'ENGR'):
+                continue
             #***************
             
             #*****plt.scatter(x[i],y[i], c=color_map[course_name])
-            scatter_plot = plt.scatter(x[i],y[i], 
-                                       c=color_map[course_name], 
-                                       picker=5, 
-                                       label=labels_course_names[i]
-                                       )
+            #****scatter_plot = plt.scatter(x[i],y[i], 
+            scatter_plot = ax.scatter(x[i],y[i], 
+                                      c=color_map[course_name], 
+                                      picker=5, 
+                                      label=labels_course_names[i]
+                                      )
             
         self.add_legend(scatter_plot)
 
@@ -435,10 +436,10 @@ class TSNECourseVisualizer(object):
         if event.inaxes == ax:
             cont, ind = ax.contains(event) #*****scatter_plot.contains(event)
             #******
-            contFig, indFig = fig.contains(event)
+            contFig, indFig = fig.contains(event) #@UnusedVariable
             if len(indFig) > 0:
                 print('indFig: %s' % indFig)
-            cont1, ind1 = scatter_plot.contains(event)
+            cont1, ind1 = scatter_plot.contains(event) #@UnusedVariable
             if len(ind1['ind']) > 0:
                 print('Greater 0: %s' % ind1)
             #******
