@@ -9,6 +9,7 @@ import logging
 import re
 import os
 import numpy as np
+import functools
 
 from MulticoreTSNE import  MulticoreTSNE as TSNE
 
@@ -16,6 +17,9 @@ from color_constants import colors
 
 from course_vector_creation import CourseVectorsCreator
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.pyplot import scatter
+from collections import OrderedDict
 
 
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -209,24 +213,28 @@ class TSNECourseVisualizer(object):
     # Assign each major academic group to a color
     # For color choices see https://matplotlib.org/users/colors.html
     # 'tab:xxx' stands for Tableau. These are Tableau recommended
-    # categorical colors:
+    # categorical colors. Use one color to lump together acad groups
+    # we are less interested in to help unclutter the scatterplot:
     
-    course_color_dict   = {
-        'ENGR' :  colors['blue'].hex_format(), 
-        'GSB'  :  colors['banana'].hex_format(), 
-        'H&S'  :  colors['darkseagreen'].hex_format(),
-        'MED'  :  colors['red1'].hex_format(),
-        'UG'   :  colors['purple'].hex_format(),
-        'EARTH':  colors['brick'].hex_format(),         # Brown
-        'EDUC' :  colors['bisque1'].hex_format(),       # light brownish
-        'VPUE' :  colors['cyan2'].hex_format(),
-        'ATH'  :  colors['darkgray'].hex_format(),
-        'LAW'  :  colors['darkgray'].hex_format(), 
-        'VPSA' :  colors['darkgray'].hex_format(),
-        'VPTL' :  colors['darkgray'].hex_format(), 
-        'CSP'  :  colors['darkgray'].hex_format(), 
-        }
-
+    LUMP_COLOR = colors['darkgray'].hex_format()
+    course_color_dict   = OrderedDict(
+        [
+            ('ENGR' ,  colors['blue'].hex_format()),
+            ('GSB'  ,  colors['banana'].hex_format()),
+            ('H&S'  ,  colors['darkseagreen'].hex_format()),
+            ('MED'  ,  colors['red1'].hex_format()),
+            ('UG'   ,  colors['purple'].hex_format()),
+            ('EARTH',  colors['brick'].hex_format()),     # Brown
+            ('EDUC' ,  colors['bisque1'].hex_format()),   # Light brownish
+            ('VPUE' ,  colors['cyan2'].hex_format()),
+            ('ATH'  ,  LUMP_COLOR),
+            ('LAW'  ,  LUMP_COLOR),
+            ('VPSA' ,  LUMP_COLOR),
+            ('VPTL' ,  LUMP_COLOR),
+            ('CSP'  ,  LUMP_COLOR)
+        ]
+    ) 
+    
     def __init__(self, course_vectors_model):
         '''
         Constructor
@@ -292,9 +300,10 @@ class TSNECourseVisualizer(object):
                           n_jobs=4) # n_jobs is part of the MulticoreTSNE
         logInfo('Done mapping %s word vector dimensions to 2D.' % course_vector_model.vector_size)
         logInfo('Fitting course vectors to t_sne model...')
-        #*******new_values = tsne_model.fit_transform(tokens_vectors)
+        #*******
         np_tokens_vectors = np.array(tokens_vectors)
-        new_values = tsne_model.fit_transform(np_tokens_vectors[0:1000,])
+        new_values = tsne_model.fit_transform(np_tokens_vectors)
+        #new_values = tsne_model.fit_transform(np_tokens_vectors[0:500,])
         #****
         logInfo('Done fitting course vectors to t_sne model.')
     
@@ -304,7 +313,8 @@ class TSNECourseVisualizer(object):
             x.append(value[0])
             y.append(value[1])
             
-        fig = plt.figure(figsize=(16, 16))
+        #****fig = plt.figure(figsize=(16, 16))
+        fig,ax = plt.subplots()
         logInfo('Populating  t_sne plot...') 
         for i in range(len(x)):
             try:
@@ -314,30 +324,135 @@ class TSNECourseVisualizer(object):
                 continue
             #***************
             acad_group = self.group_name_from_course_name(course_name)
-            # Leave out H&S:
-            if acad_group == 'H&S':
+            if acad_group is None:
+                # One course has name '\N', which obviously has
+                # no acad group associated with it. Skip over that
+                # data point:
                 continue
+            # Leave out H&S:
+            #if acad_group == 'H&S':
+            #    continue
             #***************
             #***************
             # Thin out the chart for test speed:
-            if acad_group != 'MED':
-                continue
+            #if not (acad_group == 'MED' or acad_group == 'ENGR'):
+            #    continue
             #***************
             
             #*****plt.scatter(x[i],y[i], c=color_map[course_name])
-            plt.scatter(x[i],y[i], c=color_map[course_name], picker=5, label=labels_course_names[i])
-            #plt.annotate(labels[i],
-            #             xy=(x[i], y[i]),
-            #             xytext=(5, 2),
-            #             textcoords='offset points',
-            #             ha='right',
-            #             va='bottom')
+            scatter_plot = plt.scatter(x[i],y[i], 
+                                       c=color_map[course_name], 
+                                       picker=5, 
+                                       label=labels_course_names[i]
+                                       )
+            
+        self.add_legend(scatter_plot)
+
+        # Prepare annotation popups:
+        annot = ax.annotate("",
+                            xy=(0,0),
+                            xytext=(20,20),
+                            textcoords="offset points",
+                            bbox=dict(boxstyle="round", fc="w"),
+                            arrowprops=dict(arrowstyle="->")
+                            )
+        annot.set_visible(False)
+        curried_hover = functools.partial(self.hover, 
+                                          annot, 
+                                          fig, 
+                                          ax, 
+                                          scatter_plot,
+                                          labels_course_names)
+        
+        # Connect the listeners:
+        
+        # Hovering:
+        fig.canvas.mpl_connect("motion_notify_event", curried_hover)
+        
+        # Clicking on a dot:
+        fig.canvas.mpl_connect("pick_event", self.onpick)
+                                      
         logInfo('Done populating  t_sne plot.')
-        #***************
-        fig.canvas.mpl_connect('pick_event', onpick)
-        #***************
+
         plt.show()
-        return tsne_model
+        
+    def add_legend(self, scatter_plot):
+        
+        ax = scatter_plot.axes
+        LUMP_COLOR = TSNECourseVisualizer.LUMP_COLOR
+        
+        # Shrink current axis's height by 10% on the bottom
+        # to make room for a horizontal legend:
+        #***********
+        #box = ax.get_position()
+        #ax.set_position([box.x0, box.y0 + box.height * 0.1,
+        #         box.width, box.height * 0.9])
+        #***********        
+        
+        # Create proxy artists: the color patches for the legend:
+        color_patches = []
+        combine_remaining_groups = False
+        combined_acad_goup_text  = '' 
+        for (acad_group, rgb_color) in TSNECourseVisualizer.course_color_dict.items():
+            if combine_remaining_groups:
+                combined_acad_goup_text += ',' + acad_group
+                continue
+            # Have we reached the first acad group that we are
+            # lumping together?
+            if rgb_color == LUMP_COLOR:
+                combined_acad_goup_text = acad_group
+                combine_remaining_groups = True
+                continue
+                
+            color_patches.append(mpatches.Patch(color=rgb_color, label=acad_group))
+        # Add the final legend entry of combined acad groups:
+        color_patches.append(mpatches.Patch(color=LUMP_COLOR, label=combined_acad_goup_text))
+
+        return ax.legend(loc='upper center', 
+                         bbox_to_anchor=(0.5, -0.05),
+                         fancybox=True, 
+                         shadow=True, 
+                         ncol=9,
+                         handles=color_patches)
+            
+
+    def update_annot(self, ind, scatter_plot, annot, labels_course_names):
+        pos = scatter_plot.get_offsets()[ind["ind"][0]]
+        annot.xy = pos
+        course_name   = scatter_plot.get_label()
+        acad_grp_name = self.group_name_from_course_name(course_name)
+        if acad_grp_name is None:
+            # Ignore the one course named '\N':
+            return
+        label_text    = course_name + '/' + acad_grp_name
+        annot.set_text(scatter_plot.get_label())
+        dot_color = scatter_plot.get_facecolor()[0]
+        annot.get_bbox_patch().set_facecolor(dot_color)
+        annot.get_bbox_patch().set_alpha(0.4)
+
+    def hover(self, annot, fig, ax, scatter_plot, labels_course_names, event):
+        vis = annot.get_visible()
+        if event.inaxes == ax:
+            cont, ind = ax.contains(event) #*****scatter_plot.contains(event)
+            #******
+            contFig, indFig = fig.contains(event)
+            if len(indFig) > 0:
+                print('indFig: %s' % indFig)
+            cont1, ind1 = scatter_plot.contains(event)
+            if len(ind1['ind']) > 0:
+                print('Greater 0: %s' % ind1)
+            #******
+            if cont and len(ind) > 0:
+                self.update_annot(ind, scatter_plot, annot, labels_course_names)
+                annot.set_visible(True)
+                fig.canvas.draw_idle()
+            else:
+                if vis:
+                    annot.set_visible(False)
+                    fig.canvas.draw_idle()
+
+    def onpick(self, event):
+        print("Called: %s" % (event.artist.get_label()))
 
     def get_acad_grp_to_color_map(self, course_name_list):
 
@@ -363,6 +478,9 @@ class TSNECourseVisualizer(object):
 
 
     def group_name_from_course_name(self, course_name):
+        
+        if course_name == '\N':
+            return None
                 
         if course_name.startswith('AA'):
             return TSNECourseVisualizer.acad_grp_name_root['AA']
@@ -605,9 +723,8 @@ class TSNECourseVisualizer(object):
             else:
                 raise ValueError('Could not find subject for %s' % course_name)
         
-#***************
-def onpick(event):
-    print("Called: %s" % (event.artist.get_label()))
+    
+
 #***************   
 if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
