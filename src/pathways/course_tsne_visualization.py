@@ -18,6 +18,7 @@ from color_constants import colors
 from course_vector_creation import CourseVectorsCreator
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.pyplot import scatter
 from collections import OrderedDict
 
@@ -91,7 +92,7 @@ class TSNECourseVisualizer(object):
         'EE'    : 'ENGR',
         'EFS'   : 'H&S',
         'EMED'    : 'MED',        
-        'ENERGY' : 'ENGR',
+        'ENERGY' : 'EARTH',
         'ENGLISH' : 'H&S',
         'ENGR' : 'ENGR',
         'ETHI' : 'H&S',
@@ -313,9 +314,16 @@ class TSNECourseVisualizer(object):
             x.append(value[0])
             y.append(value[1])
             
-        #****fig = plt.figure(figsize=(16, 16))
-        fig,ax = plt.subplots()
-        logInfo('Populating  t_sne plot...') 
+        fig = plt.figure(figsize=(16, 16))
+        ax = fig.gca()
+        #fig,ax = plt.subplots()
+        #**************
+        used_x = []
+        used_y = [] 
+        #**************
+        logInfo('Populating  t_sne plot...')
+        dot_colors = []
+        dot_labels = [] 
         for i in range(len(x)):
             try:
                 course_name = labels_course_names[i]
@@ -338,14 +346,24 @@ class TSNECourseVisualizer(object):
             if not (acad_group == 'MED' or acad_group == 'ENGR'):
                 continue
             #***************
+            #*************
+            used_x.append(x[i])
+            used_y.append(y[i])
+            #*************
+            dot_colors.append(color_map[course_name])
+            dot_labels.append(labels_course_names[i])
+            #*************
+            scatter_plot = ax.scatter(x[i],y[i],
+                                      c=color_map[course_name],
+                                      picker=5,
+                                      label=labels_course_names[i])
+            #*************            
             
-            #*****plt.scatter(x[i],y[i], c=color_map[course_name])
-            #****scatter_plot = plt.scatter(x[i],y[i], 
-            scatter_plot = ax.scatter(x[i],y[i], 
-                                      c=color_map[course_name], 
-                                      picker=5, 
-                                      label=labels_course_names[i]
-                                      )
+        #******scatter_plot = ax.scatter(x,y, dot_colors,labels=dot_labels, picker=5)  
+        #scatter_plot = ax.scatter(used_x,used_y, 
+        #                          #dot_colors,
+        #                          #labels=dot_labels, 
+        #                          picker=5)  
             
         self.add_legend(scatter_plot)
 
@@ -417,34 +435,36 @@ class TSNECourseVisualizer(object):
                          handles=color_patches)
             
 
-    def update_annot(self, ind, scatter_plot, annot, labels_course_names):
-        pos = scatter_plot.get_offsets()[ind["ind"][0]]
-        annot.xy = pos
-        course_name   = scatter_plot.get_label()
+    def update_annot(self, mark_ind, ax, annot, labels_course_names):
+        plot_element = ax.get_children()[mark_ind]
+        pos = plot_element.get_offsets()
+        # Position is like array([[9.90404368, 2.215768  ]]). So
+        # grab first pair:
+        annot.xy = pos[0]
+        course_name   = plot_element.get_label()
         acad_grp_name = self.group_name_from_course_name(course_name)
         if acad_grp_name is None:
             # Ignore the one course named '\N':
             return
         label_text    = course_name + '/' + acad_grp_name
-        annot.set_text(scatter_plot.get_label())
-        dot_color = scatter_plot.get_facecolor()[0]
+        annot.set_text(label_text)
+        dot_color = plot_element.get_facecolor()[0]
         annot.get_bbox_patch().set_facecolor(dot_color)
         annot.get_bbox_patch().set_alpha(0.4)
 
     def hover(self, annot, fig, ax, scatter_plot, labels_course_names, event):
         vis = annot.get_visible()
         if event.inaxes == ax:
-            cont, ind = ax.contains(event) #*****scatter_plot.contains(event)
-            #******
-            contFig, indFig = fig.contains(event) #@UnusedVariable
-            if len(indFig) > 0:
-                print('indFig: %s' % indFig)
-            cont1, ind1 = scatter_plot.contains(event) #@UnusedVariable
-            if len(ind1['ind']) > 0:
-                print('Greater 0: %s' % ind1)
-            #******
-            if cont and len(ind) > 0:
-                self.update_annot(ind, scatter_plot, annot, labels_course_names)
+            try:
+                # plot_element.contains(event) returns a two-tuple: (False, {'ind': array([], dtype=int32)})
+                # Look for the first dot where contains is True:
+                mark_ind = next(i for i,plot_element in enumerate(ax.get_children()) 
+                                if plot_element.contains(event)[0] and isinstance(plot_element, tsne_dot_class) 
+                                )
+            except StopIteration:
+                mark_ind = None
+            if mark_ind is not None:
+                self.update_annot(mark_ind, ax, annot, labels_course_names)
                 annot.set_visible(True)
                 fig.canvas.draw_idle()
             else:
@@ -720,7 +740,10 @@ class TSNECourseVisualizer(object):
             subject_part = self.crse_subject_re.match(course_name).group(1)
             if len(subject_part) > 0:
                 # Assume that course name (i.e. SUBJECT) is known in acad_grp_name_root: 
-                return TSNECourseVisualizer.acad_grp_name_root[subject_part]
+                try:
+                    return TSNECourseVisualizer.acad_grp_name_root[subject_part]
+                except KeyError:
+                    return None
             else:
                 raise ValueError('Could not find subject for %s' % course_name)
         
