@@ -16,6 +16,8 @@ import warnings
 
 from MulticoreTSNE import  MulticoreTSNE as TSNE
 from matplotlib.collections import PathCollection as tsne_dot_class
+from matplotlib.path import Path
+from matplotlib.widgets import LassoSelector
 
 from color_constants import colors
 from course_vector_creation import CourseVectorsCreator
@@ -353,7 +355,7 @@ class TSNECourseVisualizer(object):
                                     gridspec_kw={'width_ratios':[3,1]},
                                     figsize=(15,10)
                                     )
-        ax_tsne = axes_arr[0]
+        self.ax_tsne = axes_arr[0]
         self.ax_course_list = axes_arr[1]
         self.prepare_course_list_panel()
         for i in range(len(x)):
@@ -377,7 +379,7 @@ class TSNECourseVisualizer(object):
             if not (acad_group == 'MED' or acad_group == 'ENGR'):
                 continue
             #***************
-            scatter_plot = ax_tsne.scatter(x[i],y[i],
+            scatter_plot = self.ax_tsne.scatter(x[i],y[i],
                                       c=color_map[course_name],
                                       picker=5,
                                       label=labels_course_names[i])
@@ -385,7 +387,7 @@ class TSNECourseVisualizer(object):
         self.add_legend(scatter_plot)
 
         # Prepare annotation popups:
-        annot = ax_tsne.annotate("",
+        annot = self.ax_tsne.annotate("",
                             xy=(0,0),
                             xytext=(20,20),
                             textcoords="offset points",
@@ -396,7 +398,11 @@ class TSNECourseVisualizer(object):
         # Use currying to create a function that called when
         # mouse moves. But in addition to the event, several 
         # other quantities are passed:
-        curried_hover = functools.partial(self.hover, annot,ax_tsne)
+        curried_hover = functools.partial(self.hover, annot)
+        
+        self.lasso = LassoSelector(self.ax_tsne, onselect=self.onselect)
+        self.ind = []
+        self.xys = scatter_plot.get_offsets()
         
         # Connect the listeners:
         
@@ -409,6 +415,9 @@ class TSNECourseVisualizer(object):
         # Double clicking anywhere:
         fig.canvas.mpl_connect("button_press_event", self.onclick)
                                       
+        # Lassoing points:
+        fig.canvas.mpl_connect("key_press_event", self.onenter_key)
+        
         logInfo('Done populating  t_sne plot.')
 
         plt.show()
@@ -453,8 +462,8 @@ class TSNECourseVisualizer(object):
                          handles=color_patches)
             
 
-    def update_annot(self, mark_ind, ax_tsne, annot):
-        plot_element = ax_tsne.get_children()[mark_ind]
+    def update_annot(self, mark_ind, annot):
+        plot_element = self.ax_tsne.get_children()[mark_ind]
         pos = plot_element.get_offsets()
         # Position is like array([[9.90404368, 2.215768  ]]). So
         # grab first pair:
@@ -470,21 +479,21 @@ class TSNECourseVisualizer(object):
         annot.get_bbox_patch().set_facecolor(dot_color)
         annot.get_bbox_patch().set_alpha(0.4)
 
-    def hover(self, annot, ax_tsne, event):
+    def hover(self, annot, event):
         vis = annot.get_visible()
-        fig = ax_tsne.get_figure()
+        fig = self.ax_tsne.get_figure()
         
-        if event.inaxes == ax_tsne:
+        if event.inaxes == self.ax_tsne:
             try:
                 # plot_element.contains(event) returns a two-tuple: (False, {'ind': array([], dtype=int32)})
                 # Look for the first dot where contains is True:
-                mark_ind = next(i for i,plot_element in enumerate(ax_tsne.get_children()) 
+                mark_ind = next(i for i,plot_element in enumerate(self.ax_tsne.get_children()) 
                                 if plot_element.contains(event)[0] and isinstance(plot_element, tsne_dot_class) 
                                 )
             except StopIteration:
                 mark_ind = None
             if mark_ind is not None:
-                self.update_annot(mark_ind, ax_tsne, annot)
+                self.update_annot(mark_ind, annot)
                 annot.set_visible(True)
                 fig.canvas.draw_idle()
             else:
@@ -536,6 +545,21 @@ class TSNECourseVisualizer(object):
             self.course_names_text_artist.remove()
             self.course_names_text_artist = None
             self.ax_course_list.get_figure().canvas.draw_idle()
+            
+    def onenter_key(self, event):
+        if not event.key == "enter":
+            return
+        print(self.xys[self.ind])
+        #******self.disconnect()
+
+    def onselect(self, verts):
+        path = Path(verts)
+        self.ind = np.nonzero(path.contains_points(self.xys))[0]
+        #*****self.ax_tsne.get_figure().canvas.draw_idle()
+
+    def disconnect(self):
+        self.lasso.disconnect_events()
+        self.ax_tsne.get_figure().canvas.draw_idle()
 
     def get_acad_grp_to_color_map(self, course_name_list):
 
