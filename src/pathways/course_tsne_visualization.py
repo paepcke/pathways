@@ -314,16 +314,9 @@ class TSNECourseVisualizer(object):
             x.append(value[0])
             y.append(value[1])
             
-        fig = plt.figure(figsize=(16, 16))
-        ax = fig.gca()
-        #fig,ax = plt.subplots()
-        #**************
-        used_x = []
-        used_y = [] 
-        #**************
-        logInfo('Populating  t_sne plot...')
-        dot_colors = []
-        dot_labels = [] 
+        #******fig = plt.figure(figsize=(16, 16))
+        #******ax = fig.gca()
+        fig,ax = plt.subplots()
         for i in range(len(x)):
             try:
                 course_name = labels_course_names[i]
@@ -346,25 +339,11 @@ class TSNECourseVisualizer(object):
             if not (acad_group == 'MED' or acad_group == 'ENGR'):
                 continue
             #***************
-            #*************
-            used_x.append(x[i])
-            used_y.append(y[i])
-            #*************
-            dot_colors.append(color_map[course_name])
-            dot_labels.append(labels_course_names[i])
-            #*************
             scatter_plot = ax.scatter(x[i],y[i],
                                       c=color_map[course_name],
                                       picker=5,
                                       label=labels_course_names[i])
-            #*************            
-            
-        #******scatter_plot = ax.scatter(x,y, dot_colors,labels=dot_labels, picker=5)  
-        #scatter_plot = ax.scatter(used_x,used_y, 
-        #                          #dot_colors,
-        #                          #labels=dot_labels, 
-        #                          picker=5)  
-            
+
         self.add_legend(scatter_plot)
 
         # Prepare annotation popups:
@@ -376,12 +355,10 @@ class TSNECourseVisualizer(object):
                             arrowprops=dict(arrowstyle="->")
                             )
         annot.set_visible(False)
-        curried_hover = functools.partial(self.hover, 
-                                          annot, 
-                                          fig, 
-                                          ax, 
-                                          scatter_plot,
-                                          labels_course_names)
+        # Use currying to create a function that called when
+        # mouse moves. But in addition to the event, several 
+        # other quantities are passed:
+        curried_hover = functools.partial(self.hover, annot,ax)
         
         # Connect the listeners:
         
@@ -435,7 +412,7 @@ class TSNECourseVisualizer(object):
                          handles=color_patches)
             
 
-    def update_annot(self, mark_ind, ax, annot, labels_course_names):
+    def update_annot(self, mark_ind, ax, annot):
         plot_element = ax.get_children()[mark_ind]
         pos = plot_element.get_offsets()
         # Position is like array([[9.90404368, 2.215768  ]]). So
@@ -452,8 +429,10 @@ class TSNECourseVisualizer(object):
         annot.get_bbox_patch().set_facecolor(dot_color)
         annot.get_bbox_patch().set_alpha(0.4)
 
-    def hover(self, annot, fig, ax, scatter_plot, labels_course_names, event):
+    def hover(self, annot, ax, event):
         vis = annot.get_visible()
+        fig = ax.get_figure()
+        
         if event.inaxes == ax:
             try:
                 # plot_element.contains(event) returns a two-tuple: (False, {'ind': array([], dtype=int32)})
@@ -464,7 +443,7 @@ class TSNECourseVisualizer(object):
             except StopIteration:
                 mark_ind = None
             if mark_ind is not None:
-                self.update_annot(mark_ind, ax, annot, labels_course_names)
+                self.update_annot(mark_ind, ax, annot)
                 annot.set_visible(True)
                 fig.canvas.draw_idle()
             else:
