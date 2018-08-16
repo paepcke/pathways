@@ -2,25 +2,36 @@
 @author: paepcke
 '''
 
+from collections import OrderedDict
 import csv
+import functools
+from logging import error as logErr
 from logging import info as logInfo
 from logging import warn as logWarn
 import logging
-import re
 import os
-import numpy as np
-import functools
+import re
+import sys
+import warnings
 
 from MulticoreTSNE import  MulticoreTSNE as TSNE
+from matplotlib.collections import PathCollection as tsne_dot_class
 
 from color_constants import colors
-
 from course_vector_creation import CourseVectorsCreator
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.collections import PathCollection as tsne_dot_class
-from matplotlib.pyplot import scatter
-from collections import OrderedDict
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def fxn():
+    warnings.warn("deprecated", DeprecationWarning)
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    fxn()                
+
+
 
 
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -31,6 +42,11 @@ class TSNECourseVisualizer(object):
     '''
     # File with a bulk of explict mappings from course name to acadGrp:
     course2school_map_file  = os.path.join(os.path.dirname(__file__), 'courseNameAcademicOrg.csv')
+    course_descr_file       = os.path.join(os.path.dirname(__file__), 'crsNmDescriptions.csv')
+    
+    # Dict mapping course names to short and long descriptions:
+    course_descr_dict = {}
+    
     # Dict for the explicit course --> academicGroup map in course2school_map_file:
     course_school_dict = {}
 
@@ -242,10 +258,26 @@ class TSNECourseVisualizer(object):
         '''
         # Read the mapping from course name to academic organization 
         # roughly (a.k.a. school):
+        
         with open(TSNECourseVisualizer.course2school_map_file, 'r') as fd:
             reader = csv.reader(fd)
             for (course_name, school_name) in reader:
                 TSNECourseVisualizer.course_school_dict[course_name] = school_name
+                
+        # If available, read the course descriptions:
+        
+        try:
+            with open(TSNECourseVisualizer.course_descr_file, 'r') as fd:
+                reader = csv.reader(fd)
+                try:
+                    for (course_name, descr, description) in reader:
+                        TSNECourseVisualizer.course_descr_dict[course_name] = {'descr' : descr, 'description' : description}
+                except ValueError as e:
+                    logErr(`e`)
+                    sys.exit()
+        except IOError:
+            logWarn("No course description file found. Descriptions won't be available.")
+        
                 
         # Regex to separate SUBJECT from CATALOG_NBR in a course name:
         self.crse_subject_re = re.compile(r'([^0-9]*).*$')
@@ -253,6 +285,9 @@ class TSNECourseVisualizer(object):
         course_name_list = self.create_course_name_list(course_vectors_model)                
         # Map each course to the Tableau categorical color of its school (academicGroup):
         color_map = self.get_acad_grp_to_color_map(course_name_list)
+        
+        # No text in the course_name list yet:
+        self.course_names_text_artist = None
         
         self.plot_tsne_clusters(course_vectors_model, color_map, course_name_list)
         
@@ -290,8 +325,6 @@ class TSNECourseVisualizer(object):
             tokens_vectors.append(course_vector_model[course_name])
             labels_course_names.append(course_name)
         
-        word_vectors = course_vector_model.wv.vectors
-        
         logInfo('Mapping %s word vector dimensions to 2D...' % course_vector_model.vector_size)
         tsne_model = TSNE(perplexity=60, 
                           n_components=2, 
@@ -314,32 +347,37 @@ class TSNECourseVisualizer(object):
             x.append(value[0])
             y.append(value[1])
             
-        #******fig = plt.figure(figsize=(16, 16))
-        #******ax = fig.gca()
-        fig,ax = plt.subplots()
+        # Two plots side by side the left one three times as wide
+        # as the one on the right:
+        fig,axes_arr = plt.subplots(nrows=1, ncols=2, 
+                                    gridspec_kw={'width_ratios':[3,1]},
+                                    figsize=(15,10)
+                                    )
+        ax_tsne = axes_arr[0]
+        self.ax_course_list = axes_arr[1]
+        self.prepare_course_list_panel()
         for i in range(len(x)):
             try:
                 course_name = labels_course_names[i]
             except IndexError:
                 logWarn("Ran out of course names at i=%s" % i)
                 continue
-            #***************
             acad_group = self.group_name_from_course_name(course_name)
             if acad_group is None:
                 # One course has name '\N', which obviously has
                 # no acad group associated with it. Skip over that
                 # data point:
                 continue
+            
+            #******************
             # Leave out H&S:
             #if acad_group == 'H&S':
             #    continue
-            #***************
-            #***************
             # Thin out the chart for test speed:
             if not (acad_group == 'MED' or acad_group == 'ENGR'):
                 continue
             #***************
-            scatter_plot = ax.scatter(x[i],y[i],
+            scatter_plot = ax_tsne.scatter(x[i],y[i],
                                       c=color_map[course_name],
                                       picker=5,
                                       label=labels_course_names[i])
@@ -347,7 +385,7 @@ class TSNECourseVisualizer(object):
         self.add_legend(scatter_plot)
 
         # Prepare annotation popups:
-        annot = ax.annotate("",
+        annot = ax_tsne.annotate("",
                             xy=(0,0),
                             xytext=(20,20),
                             textcoords="offset points",
@@ -358,7 +396,7 @@ class TSNECourseVisualizer(object):
         # Use currying to create a function that called when
         # mouse moves. But in addition to the event, several 
         # other quantities are passed:
-        curried_hover = functools.partial(self.hover, annot,ax)
+        curried_hover = functools.partial(self.hover, annot,ax_tsne)
         
         # Connect the listeners:
         
@@ -367,6 +405,9 @@ class TSNECourseVisualizer(object):
         
         # Clicking on a dot:
         fig.canvas.mpl_connect("pick_event", self.onpick)
+
+        # Double clicking anywhere:
+        fig.canvas.mpl_connect("button_press_event", self.onclick)
                                       
         logInfo('Done populating  t_sne plot.')
 
@@ -412,8 +453,8 @@ class TSNECourseVisualizer(object):
                          handles=color_patches)
             
 
-    def update_annot(self, mark_ind, ax, annot):
-        plot_element = ax.get_children()[mark_ind]
+    def update_annot(self, mark_ind, ax_tsne, annot):
+        plot_element = ax_tsne.get_children()[mark_ind]
         pos = plot_element.get_offsets()
         # Position is like array([[9.90404368, 2.215768  ]]). So
         # grab first pair:
@@ -429,21 +470,21 @@ class TSNECourseVisualizer(object):
         annot.get_bbox_patch().set_facecolor(dot_color)
         annot.get_bbox_patch().set_alpha(0.4)
 
-    def hover(self, annot, ax, event):
+    def hover(self, annot, ax_tsne, event):
         vis = annot.get_visible()
-        fig = ax.get_figure()
+        fig = ax_tsne.get_figure()
         
-        if event.inaxes == ax:
+        if event.inaxes == ax_tsne:
             try:
                 # plot_element.contains(event) returns a two-tuple: (False, {'ind': array([], dtype=int32)})
                 # Look for the first dot where contains is True:
-                mark_ind = next(i for i,plot_element in enumerate(ax.get_children()) 
+                mark_ind = next(i for i,plot_element in enumerate(ax_tsne.get_children()) 
                                 if plot_element.contains(event)[0] and isinstance(plot_element, tsne_dot_class) 
                                 )
             except StopIteration:
                 mark_ind = None
             if mark_ind is not None:
-                self.update_annot(mark_ind, ax, annot)
+                self.update_annot(mark_ind, ax_tsne, annot)
                 annot.set_visible(True)
                 fig.canvas.draw_idle()
             else:
@@ -452,7 +493,49 @@ class TSNECourseVisualizer(object):
                     fig.canvas.draw_idle()
 
     def onpick(self, event):
-        print("Called: %s" % (event.artist.get_label()))
+        
+        course_name = event.artist.get_label()
+        
+        # Get existing list in course name list and
+        # add the new course to it:
+        
+        if self.course_names_text_artist is not None:
+            curr_text = self.course_names_text_artist.get_text()
+            curr_text += '\n'
+            self.course_names_text_artist.remove()
+            self.course_names_text_artist = None
+        else:
+            curr_text = ''
+            
+        new_text = curr_text + course_name
+        # If we have course descriptions loaded, add short and long descriptions:
+        if len(TSNECourseVisualizer.course_descr_dict) > 0:
+            try:
+                descr_description_dict = TSNECourseVisualizer.course_descr_dict[course_name] 
+                descr = descr_description_dict['descr']
+                description = descr_description_dict['description']
+            except KeyError:
+                # descr/description unavalable for this course:
+                descr = 'unavailable'
+                description = ''
+            new_text += ' ' + descr
+            if description != '\N':
+                new_text += '; ' + description
+            
+        self.course_names_text_artist =\
+            self.ax_course_list.text(-0.2, 0.95, 
+                                     new_text, 
+                                     transform=self.ax_course_list.transAxes,
+                                     fontsize=10, 
+                                     va='top', 
+                                     wrap=True)
+        self.ax_course_list.get_figure().canvas.draw_idle()
+
+    def onclick(self, event):
+        if event.dblclick and self.course_names_text_artist is not None:
+            self.course_names_text_artist.remove()
+            self.course_names_text_artist = None
+            self.ax_course_list.get_figure().canvas.draw_idle()
 
     def get_acad_grp_to_color_map(self, course_name_list):
 
@@ -726,7 +809,12 @@ class TSNECourseVisualizer(object):
             else:
                 raise ValueError('Could not find subject for %s' % course_name)
         
-    
+    def prepare_course_list_panel(self):
+        #*****self.ax_course_list.facolor('red')
+        self.ax_course_list.set_title('List of Clicked Courses', fontsize=15)
+        #*****self.ax_course_list.suptitle('Double-click to erase', fontsize=10, style='italic')
+        self.ax_course_list.axis('off')
+
 
 #***************   
 if __name__ == '__main__':
