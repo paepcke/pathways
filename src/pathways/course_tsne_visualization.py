@@ -34,15 +34,17 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     fxn()                
 
-
-
-
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
 class TSNECourseVisualizer(object):
     '''
     classdocs
     '''
+    
+    # Number of courses to list when user clicks
+    # on a clump of stacked marks:
+    MAX_NUM_COURSES_TO_LIST = 15
+    
     # File with a bulk of explict mappings from course name to acadGrp:
     course2school_map_file  = os.path.join(os.path.dirname(__file__), 'courseNameAcademicOrg.csv')
     course_descr_file       = os.path.join(os.path.dirname(__file__), 'crsNmDescriptions.csv')
@@ -513,49 +515,97 @@ class TSNECourseVisualizer(object):
                     annot.set_visible(False)
                     fig.canvas.draw_idle()
 
+
+    def update_course_list_display(self, new_text, refresh_course_name_display=False):
+        if self.course_names_text_artist is not None:
+            self.course_names_text_artist.remove()
+            self.course_names_text_artist = None
+        
+        # Remove any duplicates:
+        new_text = "\n".join(list(OrderedDict.fromkeys(new_text.split("\n"))))
+        self.course_names_text_artist = self.ax_course_list.text(-0.2, 0.95, 
+            new_text, 
+            transform=self.ax_course_list.transAxes, 
+            fontsize=10, 
+            va='top', 
+            wrap=True)
+        self.ax_course_list.get_figure().canvas.draw_idle()
+
+    def append_to_course_list_display(self, course_name, refresh_course_name_display=False):
+        '''
+        Get already-displayed course descriptions. See whether we already have more
+        than our upper limit. If not, find courses descriptions, make a new line for
+        the display (course name plus descr, plus description). 
+        
+        If refresh_course_name_display is True, erase current list on the display,
+        and replace it with the new content:
+        
+        @param course_name:
+        @type course_name:
+        @param refresh_course_name_display:
+        @type refresh_course_name_display:
+        '''
+
+        try:
+            if self.course_names_text_artist is not None:
+                
+                # Already showing text; internally add new course to that
+                # list if that doesn't exceed max courses to show, and 
+                # erase current text if we will replace the text:
+                
+                curr_text = self.course_names_text_artist.get_text()
+                # Already have max lines plus a line saying "... more buried under."?
+                num_lines = curr_text.count('\n')
+                if num_lines >= TSNECourseVisualizer.MAX_NUM_COURSES_TO_LIST + 1:
+                    new_text = None
+                    return
+                elif num_lines == TSNECourseVisualizer.MAX_NUM_COURSES_TO_LIST:
+                    new_text = curr_text + '\n... more buried under.'
+                    return 
+                # Have room for more courses in the displayed list:
+                curr_text += '\n'
+            else:
+                curr_text = ''
+                
+            new_text = curr_text + course_name
+            # If we have course descriptions loaded, add short and long descriptions:
+            if len(TSNECourseVisualizer.course_descr_dict) > 0:
+                try:
+                    descr_description_dict = TSNECourseVisualizer.course_descr_dict[course_name] 
+                    descr = descr_description_dict['descr']
+                    description = descr_description_dict['description']
+                except KeyError:
+                    # descr/description unavalable for this course:
+                    descr = 'unavailable'
+                    description = ''
+                new_text += ' ' + descr
+                if description != '\N':
+                    new_text += '; ' + description
+        finally:
+            if new_text is not None:
+                self.update_course_list_display(new_text, refresh_course_name_display)
+
+
     def onpick(self, event):
         
         course_name = event.artist.get_label()
         
         # Get existing list in course name list and
         # add the new course to it:
-        
-        if self.course_names_text_artist is not None:
-            curr_text = self.course_names_text_artist.get_text()
-            curr_text += '\n'
-            self.course_names_text_artist.remove()
-            self.course_names_text_artist = None
-        else:
-            curr_text = ''
-            
-        new_text = curr_text + course_name
-        # If we have course descriptions loaded, add short and long descriptions:
-        if len(TSNECourseVisualizer.course_descr_dict) > 0:
-            try:
-                descr_description_dict = TSNECourseVisualizer.course_descr_dict[course_name] 
-                descr = descr_description_dict['descr']
-                description = descr_description_dict['description']
-            except KeyError:
-                # descr/description unavalable for this course:
-                descr = 'unavailable'
-                description = ''
-            new_text += ' ' + descr
-            if description != '\N':
-                new_text += '; ' + description
-            
-        self.course_names_text_artist =\
-            self.ax_course_list.text(-0.2, 0.95, 
-                                     new_text, 
-                                     transform=self.ax_course_list.transAxes,
-                                     fontsize=10, 
-                                     va='top', 
-                                     wrap=True)
-        self.ax_course_list.get_figure().canvas.draw_idle()
+          
+        self.append_to_course_list_display(course_name, refresh_course_name_display=True)
 
     def onclick(self, event):
+        '''
+        If double click, erase text area:
+        
+        @param event:
+        @type event:
+        '''
         if event.dblclick and self.course_names_text_artist is not None:
             self.course_names_text_artist.remove()
             self.course_names_text_artist = None
+            self.lassoed_course_points    = []
             self.ax_course_list.get_figure().canvas.draw_idle()
             
     def onenter_key(self, event):
@@ -567,12 +617,13 @@ class TSNECourseVisualizer(object):
     def onselect(self, verts):
         lasso_path = Path(verts)
         self.lassoed_course_points.extend(self.course_points.contains_course_points(lasso_path))
-        #****
-        #******Output list of names to GUI:
+        # Output list of names to GUI:
         course_names = [course_point.get_label() for course_point in self.lassoed_course_points]
-        print('Selected courses: %s.' % course_names)
-        #****
-        
+        # Remove duplicates:
+        for course_name in course_names:
+            self.append_to_course_list_display(course_name,refresh_course_name_display=False)
+        self.ax_course_list.get_figure().canvas.draw_idle()
+        #print('Selected courses: %s.' % course_names)
 
     def disconnect(self):
         self.lasso.disconnect_events()
