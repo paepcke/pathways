@@ -5,6 +5,7 @@
 from collections import OrderedDict
 import csv
 import functools
+import itertools
 from logging import error as logErr
 from logging import info as logInfo
 from logging import warn as logWarn
@@ -291,6 +292,11 @@ class TSNECourseVisualizer(object):
         # No text in the course_name list yet:
         self.course_names_text_artist = None
         
+        # No course points plotted yet. Has a dictionary interface:
+        self.course_points = CoursePoints()
+        # No course points lassoed yet:
+        self.lassoed_course_points = []
+        
         self.plot_tsne_clusters(course_vectors_model, color_map, course_name_list)
         
     def create_course_name_list(self, course_vectors_model):
@@ -358,6 +364,9 @@ class TSNECourseVisualizer(object):
         self.ax_tsne = axes_arr[0]
         self.ax_course_list = axes_arr[1]
         self.prepare_course_list_panel()
+        # List of point coordinates:
+        self.xys = []
+
         for i in range(len(x)):
             try:
                 course_name = labels_course_names[i]
@@ -383,6 +392,11 @@ class TSNECourseVisualizer(object):
                                       c=color_map[course_name],
                                       picker=5,
                                       label=labels_course_names[i])
+            # Add this point's coords to our list. The offsets are 
+            # a list of this scatterplot's points. But there is only 
+            # a single one, since we add one by one:
+            
+            self.course_points[scatter_plot.get_offsets()[0]] = scatter_plot
 
         self.add_legend(scatter_plot)
 
@@ -401,8 +415,6 @@ class TSNECourseVisualizer(object):
         curried_hover = functools.partial(self.hover, annot)
         
         self.lasso = LassoSelector(self.ax_tsne, onselect=self.onselect)
-        self.ind = []
-        self.xys = scatter_plot.get_offsets()
         
         # Connect the listeners:
         
@@ -549,13 +561,18 @@ class TSNECourseVisualizer(object):
     def onenter_key(self, event):
         if not event.key == "enter":
             return
-        print(self.xys[self.ind])
+        print('Pressed Enter')
         #******self.disconnect()
 
     def onselect(self, verts):
-        path = Path(verts)
-        self.ind = np.nonzero(path.contains_points(self.xys))[0]
-        #*****self.ax_tsne.get_figure().canvas.draw_idle()
+        lasso_path = Path(verts)
+        self.lassoed_course_points.extend(self.course_points.contains_course_points(lasso_path))
+        #****
+        #******Output list of names to GUI:
+        course_names = [course_point.get_label() for course_point in self.lassoed_course_points]
+        print('Selected courses: %s.' % course_names)
+        #****
+        
 
     def disconnect(self):
         self.lasso.disconnect_events()
@@ -839,7 +856,66 @@ class TSNECourseVisualizer(object):
         #*****self.ax_course_list.suptitle('Double-click to erase', fontsize=10, style='italic')
         self.ax_course_list.axis('off')
 
+class CoursePoints(dict):
+    '''
+    A dict mapping nparray coordinate points to scatterplot
+    objects, i.e. to what's returned from an ax.scatter() call.
+    Special methods: contains_course_point(<nparray of one coordinate pair>)
+                     contains_course_points(array of <nparray of one coordinate pair>)
+    '''
+    
+    def __init__(self):
+        super(CoursePoints, self).__init__()
+        
+    def __setitem__(self, coord_pair, course_point):
+        '''
+        Handle coordinate pairs that are arrays, tuples, or numpy arrays.
+        
+        @param coord_pair: Coordinates to find in the collection
+        @type coord_pair: {array | tuple | numpy.narray
+        @param course_point: a scatter plot point, i.e. a course point
+        @type course_point: PathCollection
+        '''
+        if isinstance(coord_pair, np.ndarray):
+            coord_pair = coord_pair.tolist()
+        super(CoursePoints, self).__setitem__(tuple(coord_pair), course_point)
+        
+    def contains_course_point(self, path, coord_pair):
+        '''
+        Given one array of two coordinates, return the course point
+        that lives there, or None, if no course point lives at that location.
+        @param coord_pair: Array of two floats. Coordinate system must match elements that 
+            were previously put in.
+        @type coord_pair: [float,float]
+        @return: scatter artist or None.
+        @rtype: PathCollection or None
+        '''
+        coord_pair_tuple = tuple(coord_pair)
+        if path.contains_point(coord_pair):
+            return self[coord_pair_tuple]
+        else:
+            return None 
+    
+    def contains_course_points(self, path):
+        '''
+        Given a path around course points, i.e. scatter artists.
+        return the scatter artists that lie within the path:
 
+        @return: Possibly empty array of scatter artists
+        @rtype: [PathCollection]
+        '''
+        # Get an array of booleans that indicate which of the 
+        # pairs we have stored lie within the path. This will
+        # be a mask in the form of a True/False array:
+        
+        coord_pairs = self.keys()
+        contained_pair_booleans = path.contains_points(coord_pairs)
+        # Our keys are tuples of coordinate pairs. The itertools' compress()
+        # method returns an iterator with just the non-masked array/list members:
+        scatter_artists = [self[coord_pair] for coord_pair in itertools.compress(coord_pairs, contained_pair_booleans)] 
+        return scatter_artists
+
+    
 #***************   
 if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
