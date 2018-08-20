@@ -1,6 +1,6 @@
 '''
 Provide RGB color constants and a colors dictionary with
-	elements formatted: colors[colorname] = CONSTANT
+    elements formatted: colors[colorname] = CONSTANT
 From: https://www.webucator.com/blog/2015/03/python-color-constants-module/
 '''
 
@@ -11,8 +11,8 @@ colors = {} #dict of colors
 
 class RGB(Color):
     def hex_format(self):
-	'''Returns color in hex format'''
-	return '#{:02X}{:02X}{:02X}'.format(self.red,self.green,self.blue)
+        '''Returns color in hex format'''
+        return '#{:02X}{:02X}{:02X}'.format(self.red,self.green,self.blue)
 
 #Color Contants
 ALICEBLUE = RGB(240, 248, 255)

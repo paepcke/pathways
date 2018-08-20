@@ -1,9 +1,17 @@
 '''
 @author: paepcke
+
+NOTE: had to:
+   cp /Users/paepcke/anaconda2/envs/pathwaysPy3_7/lib/python3.7/site-packages/MulticoreTSNE/libtsne_multicore.so   multicoretsne/MulticoreTSNE/
+after  
+   pip3 install MulticoreTSNE
+   
+in MulticoreTSNE's parent dir   
 '''
 
 from collections import OrderedDict
 import csv
+import datetime
 import functools
 import itertools
 from logging import error as logErr
@@ -13,18 +21,19 @@ import logging
 import os
 import re
 import sys
+import time
 import warnings
 
-from MulticoreTSNE import  MulticoreTSNE as TSNE
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 from matplotlib.widgets import LassoSelector
 
-from color_constants import colors
-from course_vector_creation import CourseVectorsCreator
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+from multicoretsne import  MulticoreTSNE as TSNE
 import numpy as np
+from pathways.color_constants import colors
+from pathways.course_vector_creation import CourseVectorsCreator
 
 
 def fxn():
@@ -261,6 +270,9 @@ class TSNECourseVisualizer(object):
         '''
         Constructor
         '''
+        
+        self.course_vectors_model = course_vectors_model
+        
         # Read the mapping from course name to academic organization 
         # roughly (a.k.a. school):
         
@@ -272,13 +284,13 @@ class TSNECourseVisualizer(object):
         # If available, read the course descriptions:
         
         try:
-            with open(TSNECourseVisualizer.course_descr_file, 'r') as fd:
+            with open(TSNECourseVisualizer.course_descr_file, 'r', encoding = "ISO-8859-1") as fd:
                 reader = csv.reader(fd)
                 try:
                     for (course_name, descr, description) in reader:
                         TSNECourseVisualizer.course_descr_dict[course_name] = {'descr' : descr, 'description' : description}
                 except ValueError as e:
-                    logErr(`e`)
+                    logErr(repr(e))
                     sys.exit()
         except IOError:
             logWarn("No course description file found. Descriptions won't be available.")
@@ -287,10 +299,14 @@ class TSNECourseVisualizer(object):
         # Regex to separate SUBJECT from CATALOG_NBR in a course name:
         self.crse_subject_re = re.compile(r'([^0-9]*).*$')
         
-        course_name_list = self.create_course_name_list(course_vectors_model)                
+        self.course_name_list = self.create_course_name_list(self.course_vectors_model)                
         # Map each course to the Tableau categorical color of its school (academicGroup):
-        color_map = self.get_acad_grp_to_color_map(course_name_list)
+        self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
+        self.init_new_plot()
         
+        plt.show()
+        
+    def init_new_plot(self):
         # No text in the course_name list yet:
         self.course_names_text_artist = None
         
@@ -299,7 +315,8 @@ class TSNECourseVisualizer(object):
         # No course points lassoed yet:
         self.lassoed_course_points = []
         
-        self.plot_tsne_clusters(course_vectors_model, color_map, course_name_list)
+        runtime = self.plot_tsne_clusters()
+        logInfo('Time to build model: %s' % runtime)
         
     def create_course_name_list(self, course_vectors_model):
         '''
@@ -313,36 +330,34 @@ class TSNECourseVisualizer(object):
         course_names = course_vectors_model.wv.vocab.keys()
         return course_names
         # Remove '\N' entries:
-        # return list(filter(lambda name: name != '\N', course_names))
+        # return list(filter(lambda name: name != '\\N', course_names))
         
-    def plot_tsne_clusters(self, course_vector_model, color_map, course_name_seq):
+    def plot_tsne_clusters(self):
         '''
-        Creates and TSNE course_vector_model and plots it
+        Creates and TSNE self.course_vector_model and plots it.
+        
+        @return: model construction time in seconds.
+        @rtype: int
+        
         '''
-        
-        #**************
-        # logInfo("Testing course names...")
-        # for course_name in course_name_seq:
-        #     group_name = self.group_name_from_course_name(course_name)
-        #
-        # logInfo("Done testing course names.")
-        #**************        
-        
+        # Start in secs after start of epoch
+        start_time = time.time()
         labels_course_names = []
         tokens_vectors      = []
         
-        for course_name in course_vector_model.wv.vocab:
-            tokens_vectors.append(course_vector_model[course_name])
+        for course_name in self.course_vectors_model.wv.vocab:
+            tokens_vectors.append(self.course_vectors_model.wv.__getitem__(course_name))
             labels_course_names.append(course_name)
         
-        logInfo('Mapping %s word vector dimensions to 2D...' % course_vector_model.vector_size)
-        tsne_model = TSNE(perplexity=60, 
-                          n_components=2, 
-                          init='random', 
-                          n_iter=2500, 
-                          random_state=23,
-                          n_jobs=4) # n_jobs is part of the MulticoreTSNE
-        logInfo('Done mapping %s word vector dimensions to 2D.' % course_vector_model.vector_size)
+        logInfo('Mapping %s word vector dimensions to 2D...' % self.course_vectors_model.vector_size)
+        tsne_model = TSNE.MulticoreTSNE(perplexity=60, 
+                                        n_components=2, 
+                                        init='random', 
+                                        n_iter=2500, 
+                                        random_state=23,
+                                        n_jobs=4, # n_jobs is part of the MulticoreTSNE
+                                        cheat_metric=True) # use Euclidean distance; supposedly faster with similar results.
+        logInfo('Done mapping %s word vector dimensions to 2D.' % self.course_vectors_model.vector_size)
         logInfo('Fitting course vectors to t_sne model...')
         #*******
         np_tokens_vectors = np.array(tokens_vectors)
@@ -377,7 +392,7 @@ class TSNECourseVisualizer(object):
                 continue
             acad_group = self.group_name_from_course_name(course_name)
             if acad_group is None:
-                # One course has name '\N', which obviously has
+                # One course has name '\\N', which obviously has
                 # no acad group associated with it. Skip over that
                 # data point:
                 continue
@@ -391,7 +406,7 @@ class TSNECourseVisualizer(object):
                 continue
             #***************
             scatter_plot = self.ax_tsne.scatter(x[i],y[i],
-                                      c=color_map[course_name],
+                                      c=self.color_map[course_name],
                                       picker=5,
                                       label=labels_course_names[i])
             # Add this point's coords to our list. The offsets are 
@@ -404,11 +419,11 @@ class TSNECourseVisualizer(object):
 
         # Prepare annotation popups:
         annot = self.ax_tsne.annotate("",
-                            xy=(0,0),
-                            xytext=(20,20),
-                            textcoords="offset points",
-                            bbox=dict(boxstyle="round", fc="w"),
-                            arrowprops=dict(arrowstyle="->")
+                                      xy=(0,0),
+                                      xytext=(20,20),
+                                      textcoords="offset points",
+                                      bbox=dict(boxstyle="round", fc="w"),
+                                      arrowprops=dict(arrowstyle="->")
                             )
         annot.set_visible(False)
         # Use currying to create a function that called when
@@ -434,7 +449,8 @@ class TSNECourseVisualizer(object):
         
         logInfo('Done populating  t_sne plot.')
 
-        plt.show()
+        runtime = int(time.time() - start_time)
+        return runtime
         
     def add_legend(self, scatter_plot):
         
@@ -485,7 +501,7 @@ class TSNECourseVisualizer(object):
         course_name   = plot_element.get_label()
         acad_grp_name = self.group_name_from_course_name(course_name)
         if acad_grp_name is None:
-            # Ignore the one course named '\N':
+            # Ignore the one course named '\\N':
             return
         label_text    = course_name + '/' + acad_grp_name
         annot.set_text(label_text)
@@ -579,7 +595,7 @@ class TSNECourseVisualizer(object):
                     descr = 'unavailable'
                     description = ''
                 new_text += ' ' + descr
-                if description != '\N':
+                if description != '\\N':
                     new_text += '; ' + description
         finally:
             if new_text is not None:
@@ -633,7 +649,7 @@ class TSNECourseVisualizer(object):
 
         color_map = {}
         for course_name in course_name_list:
-            if course_name == '\N':
+            if course_name == '\\N':
                 continue
             try:
                 # First try the explicit course-->acadGrp map:
@@ -654,7 +670,7 @@ class TSNECourseVisualizer(object):
 
     def group_name_from_course_name(self, course_name):
         
-        if course_name == '\N':
+        if course_name == '\\N':
             return None
                 
         if course_name.startswith('AA'):
@@ -959,13 +975,45 @@ class CoursePoints(dict):
         # pairs we have stored lie within the path. This will
         # be a mask in the form of a True/False array:
         
-        coord_pairs = self.keys()
+        coord_pairs = list(self.keys())
         contained_pair_booleans = path.contains_points(coord_pairs)
         # Our keys are tuples of coordinate pairs. The itertools' compress()
         # method returns an iterator with just the non-masked array/list members:
         scatter_artists = [self[coord_pair] for coord_pair in itertools.compress(coord_pairs, contained_pair_booleans)] 
         return scatter_artists
 
+# class Runtime(object):
+#     
+#     def __init__(self, low_secs, high_secs):
+#         self.t_diff = int(high_secs - low_secs)
+#         
+#     def seconds(self):
+#         return self.t_diff
+# 
+#     def minutes(self):
+#         return int(self.t_diff / 60)
+#     
+#     def hours(self):
+#         return int(self.t_diff / 3600)
+#     
+#     def duration(self):
+#         if self.t_diff() <= 60:
+#             return '%s secs' % self.t_diff()
+#         
+#         if self.minutes() <= 60:
+#             return '%s mins' % self.minutes()
+#         
+#         if self.hours() <= 24:
+#             return '%s hours' % self.hours()
+#         
+#         return '%s days, %s hours, %s minutes' % (self.t_diff % 60*60*24,
+#                                                   self.t_diff % 60*60,
+#                                                   self.t_diff % 60*60*24
+#                                                   )
+
+        
+        
+ 
     
 #***************   
 if __name__ == '__main__':

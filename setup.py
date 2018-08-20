@@ -3,7 +3,9 @@ from setuptools import setup, find_packages
 import os
 import glob
 
-datafiles = ['src/pathways/courseNameAcademicOrg.csv']
+datafiles = ['src/pathways/courseNameAcademicOrg.csv',
+             'src/pathways/crsNmDescriptions.csv'
+             ]
 
 setup(
     name = "pathways",
@@ -15,8 +17,13 @@ setup(
     # an out-of-band: sudo apt-get install python-dev
     setup_requires   = [],
     install_requires = ['matplotlib>=2.2.3',
-			'configparser>=3.3.0',
-			],
+                        'numpy>=1.15.0',
+                        'PyQt5>=5.11.2',
+                        'dill>=0.2.8.2',
+                        'cffi>=1.11.5',
+                        'gensim>=3.5.0',
+                        'configparser>=3.3.0',
+                        ],
 
     #dependency_links = ['https://github.com/DmitryUlyanov/Multicore-TSNE/tarball/master#egg=package-1.0']
     # Unit tests; they are initiated via 'python setup.py test'
@@ -25,8 +32,8 @@ setup(
     # metadata for upload to PyPI
     author = "Andreas Paepcke",
     author_email = "paepcke@cs.stanford.edu",
-    description = "Thin wrapper around pymysql. Provides Python iterator for queries. Abstracts away cursor.",
+    description = "Analysis of college pathways.",
     license = "BSD",
     keywords = "MySQL",
-    url = "https://github.com/paepcke/pymysql_utils",   # project home page, if any
+    url = "git@github.com:paepcke/pathways.git",   # project home page, if any
 )
