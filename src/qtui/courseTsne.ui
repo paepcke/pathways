@@ -474,7 +474,14 @@ pad-left: 30;</string>
           </layout>
          </item>
          <item>
-          <widget class="QTextBrowser" name="textBrowser"/>
+          <widget class="QTextEdit" name="infoDisplay">
+           <property name="lineWrapMode">
+            <enum>QTextEdit::WidgetWidth</enum>
+           </property>
+           <property name="readOnly">
+            <bool>true</bool>
+           </property>
+          </widget>
          </item>
         </layout>
        </widget>

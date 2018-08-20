@@ -11,7 +11,6 @@ in MulticoreTSNE's parent dir
 
 from collections import OrderedDict
 import csv
-import datetime
 import functools
 import itertools
 from logging import error as logErr
@@ -23,6 +22,10 @@ import re
 import sys
 import time
 import warnings
+
+# Likely not needed put in the debug the crash
+import matplotlib
+matplotlib.use("Qt5Agg")
 
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
@@ -55,8 +58,8 @@ class TSNECourseVisualizer(object):
     MAX_NUM_COURSES_TO_LIST = 15
     
     # File with a bulk of explict mappings from course name to acadGrp:
-    course2school_map_file  = os.path.join(os.path.dirname(__file__), 'courseNameAcademicOrg.csv')
-    course_descr_file       = os.path.join(os.path.dirname(__file__), 'crsNmDescriptions.csv')
+    course2school_map_file  = os.path.join(os.path.dirname(__file__), '../data/courseNameAcademicOrg.csv')
+    course_descr_file       = os.path.join(os.path.dirname(__file__), '../data/crsNmDescriptions.csv')
     
     # Dict mapping course names to short and long descriptions:
     course_descr_dict = {}
@@ -304,7 +307,7 @@ class TSNECourseVisualizer(object):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
         self.init_new_plot()
         
-        plt.show()
+        #*******plt.show()
         
     def init_new_plot(self):
         # No text in the course_name list yet:
@@ -316,7 +319,7 @@ class TSNECourseVisualizer(object):
         self.lassoed_course_points = []
         
         runtime = self.plot_tsne_clusters()
-        logInfo('Time to build model: %s' % runtime)
+        logInfo('Time to build model: %s secs' % runtime)
         
     def create_course_name_list(self, course_vectors_model):
         '''
@@ -384,6 +387,7 @@ class TSNECourseVisualizer(object):
         # List of point coordinates:
         self.xys = []
 
+        logInfo("Adding course scatter points...")
         for i in range(len(x)):
             try:
                 course_name = labels_course_names[i]
@@ -415,7 +419,10 @@ class TSNECourseVisualizer(object):
             
             self.course_points[scatter_plot.get_offsets()[0]] = scatter_plot
 
+        logInfo("Done adding course scatter points.")
+        logInfo("Adding legend...")
         self.add_legend(scatter_plot)
+        logInfo("Done adding legend.")
 
         # Prepare annotation popups:
         annot = self.ax_tsne.annotate("",
@@ -1018,7 +1025,8 @@ class CoursePoints(dict):
 #***************   
 if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
-    vector_creator.load_word2vec_model(os.path.join(os.getenv('HOME'), 'Project/Pathways/Data/Course2VecData/course2vecModelWin10.model'))
+    data_dir = os.path.join(os.path.abspath(__file__), '../data/')
+    vector_creator.load_word2vec_model(os.path.join(data_dir, 'Project/Pathways/Data/Course2VecData/course2vecModelWin10.model'))
     visualizer = TSNECourseVisualizer(vector_creator)
     
         
