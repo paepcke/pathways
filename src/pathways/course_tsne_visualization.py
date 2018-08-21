@@ -23,10 +23,6 @@ import sys
 import time
 import warnings
 
-# Likely not needed put in the debug the crash
-import matplotlib
-matplotlib.use("Qt5Agg")
-
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 from matplotlib.widgets import LassoSelector
@@ -269,12 +265,13 @@ class TSNECourseVisualizer(object):
         ]
     ) 
     
-    def __init__(self, course_vectors_model):
+    def __init__(self, course_vectors_model, axes_array=None):
         '''
         Constructor
         '''
         
         self.course_vectors_model = course_vectors_model
+        self.axes_array = axes_array
         
         # Read the mapping from course name to academic organization 
         # roughly (a.k.a. school):
@@ -307,7 +304,10 @@ class TSNECourseVisualizer(object):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
         self.init_new_plot()
         
-        #*******plt.show()
+        # If no axes were passed in for us to draw on, we are
+        # self contained, and therefore show the plot:
+        if self.axes_array is None:
+            plt.show()
         
     def init_new_plot(self):
         # No text in the course_name list yet:
@@ -318,7 +318,7 @@ class TSNECourseVisualizer(object):
         # No course points lassoed yet:
         self.lassoed_course_points = []
         
-        runtime = self.plot_tsne_clusters()
+        runtime = self.plot_tsne_clusters(axes_array=self.axes_array)
         logInfo('Time to build model: %s secs' % runtime)
         
     def create_course_name_list(self, course_vectors_model):
@@ -335,7 +335,7 @@ class TSNECourseVisualizer(object):
         # Remove '\N' entries:
         # return list(filter(lambda name: name != '\\N', course_names))
         
-    def plot_tsne_clusters(self):
+    def plot_tsne_clusters(self, axes_array=None):
         '''
         Creates and TSNE self.course_vector_model and plots it.
         
@@ -375,14 +375,20 @@ class TSNECourseVisualizer(object):
             x.append(value[0])
             y.append(value[1])
             
-        # Two plots side by side the left one three times as wide
+        # Unless we were passed in an array of plots, create
+        # two plots side by side the left one three times as wide
         # as the one on the right:
-        fig,axes_arr = plt.subplots(nrows=1, ncols=2, 
-                                    gridspec_kw={'width_ratios':[3,1]},
-                                    figsize=(15,10)
-                                    )
-        self.ax_tsne = axes_arr[0]
-        self.ax_course_list = axes_arr[1]
+        fig = None
+        if axes_array is None:
+            fig,axes_array = plt.subplots(nrows=1, ncols=2, 
+                                          gridspec_kw={'width_ratios':[3,1]},
+                                          figsize=(15,10)
+                                          )
+        self.ax_tsne = axes_array[0]
+        self.ax_course_list = axes_array[1]
+        if fig is None:
+            fig = self.ax_tsne.get_figure()
+            
         self.prepare_course_list_panel()
         # List of point coordinates:
         self.xys = []
