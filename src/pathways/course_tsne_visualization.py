@@ -352,13 +352,9 @@ class TSNECourseVisualizer(object):
         try:
             control_msg = self.in_queue.get()
             print("Control msg %s; state: %s" % (control_msg.msg_code, control_msg.state))
-            self.out_queue.put(Message('receipt for %s' % control_msg.msg_code + str(control_msg.state), int(control_msg.state) + 1))
-        except Exception as e:
-            #***************
-            print('type of exception: %s' % type(e))
-            #***************
+            self.handle_msg_from_main(control_msg)
+        except Empty:
             pass 
-
             
         # Schedule the next queue check:
         self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
@@ -369,7 +365,6 @@ class TSNECourseVisualizer(object):
             sys.exit(0)
         #*********        
         print('From main: %s, %s' % (msg.msg_code, msg.state))
-        self.out_queue.put(Message('receipt for %s' % msg.msg_code + msg.state), str(msg.state + 1))
         #*********
         
     def create_course_name_list(self, course_vectors_model):
