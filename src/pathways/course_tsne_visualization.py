@@ -39,6 +39,7 @@ from queue import Empty  # The regular queue's empty exception
 from pathways.common_classes import Message
 from pathways.color_constants import colors
 from pathways.course_vector_creation import CourseVectorsCreator
+from docutils.readers import standalone
 
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
@@ -267,17 +268,18 @@ class TSNECourseVisualizer(object):
     ) 
     
     def __init__(self, 
-                 course_vectors_model, 
-                 in_queue, 
-                 out_queue,            
-                 axes_array=None
+                 course_vectors_model,
+                 standalone=True,
+                 in_queue=None, 
+                 out_queue=None,
                  ):
         '''
         
         @param course_vectors_model:
         @type course_vectors_model:
-        @param axes_array:
-        @type axes_array:
+        @param standalone: if true, create and maintain a text box for course
+                listings.
+        @type standalone: boolean
         @param in_queue: process queue through which we will receive instructions.
         @type in_queue: multiprocessing.Queue
         @param out_queue: process queue through which we will send msgs to the main process
@@ -285,9 +287,9 @@ class TSNECourseVisualizer(object):
         '''
         
         self.course_vectors_model = course_vectors_model
-        self.axes_array = axes_array
-        self.in_queue  = in_queue
-        self.out_queue  = out_queue 
+        self.in_queue   = in_queue
+        self.out_queue  = out_queue
+        self.standalone = standalone 
         
         # Read the mapping from course name to academic organization 
         # roughly (a.k.a. school):
@@ -327,10 +329,7 @@ class TSNECourseVisualizer(object):
         self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
         self.timer.start()        
         
-        # If no axes were passed in for us to draw on, we are
-        # self contained, and therefore show the plot:
-        if self.axes_array is None:
-            plt.show()
+        plt.show()
         
     def init_new_plot(self):
         # No text in the course_name list yet:
@@ -341,8 +340,14 @@ class TSNECourseVisualizer(object):
         # No course points lassoed yet:
         self.lassoed_course_points = []
         
-        runtime = self.plot_tsne_clusters(axes_array=self.axes_array)
+        runtime = self.plot_tsne_clusters()
         logInfo('Time to build model: %s secs' % runtime)
+
+    # -------------------------------------------  Communication With Control Process if Used -----------
+
+    #--------------------------
+    # check_in_queue
+    #----------------
 
     def check_in_queue(self):
         if self.in_queue is None:
@@ -359,6 +364,10 @@ class TSNECourseVisualizer(object):
         # Schedule the next queue check:
         self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
         self.timer.start()
+    
+    #--------------------------
+    # handle_msg_from_main 
+    #----------------
         
     def handle_msg_from_main(self, msg):
         if msg.msg_code == 'stop':
@@ -367,6 +376,12 @@ class TSNECourseVisualizer(object):
         print('From main: %s, %s' % (msg.msg_code, msg.state))
         #*********
         
+    # ------------------------------------------------ Preparation Done Once --------------
+
+    #--------------------------
+    # create_course_name_list 
+    #----------------
+    
     def create_course_name_list(self, course_vectors_model):
         '''
         Create a list of tokens, i.e. course names as they are ordered
@@ -380,11 +395,19 @@ class TSNECourseVisualizer(object):
         return course_names
         # Remove '\N' entries:
         # return list(filter(lambda name: name != '\\N', course_names))
+    
+    # ------------------------------------------------- Create Plot From Scratch ---------
         
-    def plot_tsne_clusters(self, axes_array=None):
+    #--------------------------
+    # plot_tsne_clusters 
+    #----------------
+
+    def plot_tsne_clusters(self, testMode=True):
         '''
         Creates and TSNE self.course_vector_model and plots it.
-        
+    
+        @param testMode: if True, only a subset of courses are fit for speed
+        @type testMode: boolean 
         @return: model construction time in seconds.
         @rtype: int
         
@@ -408,11 +431,14 @@ class TSNECourseVisualizer(object):
                                         cheat_metric=True) # use Euclidean distance; supposedly faster with similar results.
         logInfo('Done mapping %s word vector dimensions to 2D.' % self.course_vectors_model.vector_size)
         logInfo('Fitting course vectors to t_sne model...')
-        #*******
+
         np_tokens_vectors = np.array(tokens_vectors)
-        #*****new_values = tsne_model.fit_transform(np_tokens_vectors)
-        new_values = tsne_model.fit_transform(np_tokens_vectors[0:500,])
-        #****
+        # In test mode we only fit 500 courses to save time: 
+        if testMode:
+            new_values = tsne_model.fit_transform(np_tokens_vectors[0:500,])
+        else:
+            new_values = tsne_model.fit_transform(np_tokens_vectors)
+
         logInfo('Done fitting course vectors to t_sne model.')
     
         x = []
@@ -420,18 +446,23 @@ class TSNECourseVisualizer(object):
         for value in new_values:
             x.append(value[0])
             y.append(value[1])
-            
-        # Unless we were passed in an array of plots, create
-        # two plots side by side the left one three times as wide
-        # as the one on the right:
-        fig = None
-        if axes_array is None:
+
+        # If running without a separate control surface, 
+        # Create and maintain the selected-course board to the 
+        # right of the plot:
+        if self.standalone:            
             fig,axes_array = plt.subplots(nrows=1, ncols=2, 
                                           gridspec_kw={'width_ratios':[3,1]},
                                           figsize=(15,10)
                                           )
-        self.ax_tsne = axes_array[0]
-        self.ax_course_list = axes_array[1]
+            self.ax_tsne = axes_array[0]
+            self.ax_course_list = axes_array[1]
+        else:
+            fig,self.ax_tsne = plt.subplots(nrows=1, ncols=1, 
+                                            figsize=(15,10)
+                                            )
+            
+            
         if fig is None:
             fig = self.ax_tsne.get_figure()
             
@@ -453,14 +484,12 @@ class TSNECourseVisualizer(object):
                 # data point:
                 continue
             
-            #******************
-            # Leave out H&S:
-            #if acad_group == 'H&S':
-            #    continue
-            # Thin out the chart for test speed:
-            if not (acad_group == 'MED' or acad_group == 'ENGR'):
-                continue
-            #***************
+
+            # If in test mode: Thin out the chart for test speed:
+            if testMode:
+                if not (acad_group == 'MED' or acad_group == 'ENGR'):
+                    continue
+
             scatter_plot = self.ax_tsne.scatter(x[i],y[i],
                                       c=self.color_map[course_name],
                                       picker=5,
@@ -510,20 +539,23 @@ class TSNECourseVisualizer(object):
 
         runtime = int(time.time() - start_time)
         return runtime
+
+    #--------------------------
+    # add_legend 
+    #----------------
         
     def add_legend(self, scatter_plot):
+        '''
+        Add the legend of academic groups below the chart:
+        
+        @param scatter_plot: existing scatter plot figure
+        @type scatter_plot: figure ?
+        '''
         
         ax = scatter_plot.axes
         LUMP_COLOR = TSNECourseVisualizer.LUMP_COLOR
         
-        # Shrink current axis's height by 10% on the bottom
-        # to make room for a horizontal legend:
-        #***********
-        #box = ax.get_position()
-        #ax.set_position([box.x0, box.y0 + box.height * 0.1,
-        #         box.width, box.height * 0.9])
-        #***********        
-        
+
         # Create proxy artists: the color patches for the legend:
         color_patches = []
         combine_remaining_groups = False
@@ -550,8 +582,19 @@ class TSNECourseVisualizer(object):
                          ncol=9,
                          handles=color_patches)
             
+    #--------------------------
+    # update_annot 
+    #----------------
 
     def update_annot(self, mark_ind, annot):
+        '''
+        Update the tooltip surface with the course name
+        
+        @param mark_ind: list of point coordinates
+        @type mark_ind: [[float,float]]
+        @param annot: tooltip surface
+        @type annot: ?
+        '''
         plot_element = self.ax_tsne.get_children()[mark_ind]
         pos = plot_element.get_offsets()
         # Position is like array([[9.90404368, 2.215768  ]]). So
@@ -567,6 +610,10 @@ class TSNECourseVisualizer(object):
         dot_color = plot_element.get_facecolor()[0]
         annot.get_bbox_patch().set_facecolor(dot_color)
         annot.get_bbox_patch().set_alpha(0.4)
+
+    #--------------------------
+    # hover 
+    #----------------
 
     def hover(self, annot, event):
         vis = annot.get_visible()
@@ -590,8 +637,23 @@ class TSNECourseVisualizer(object):
                     annot.set_visible(False)
                     fig.canvas.draw_idle()
 
+    #--------------------------
+    # update_course_list_display 
+    #----------------
 
-    def update_course_list_display(self, new_text, refresh_course_name_display=False):
+
+    def update_course_list_display(self, new_text):
+        '''
+        Update the course list text box. Only relevant if running
+        standalone. When not running standalone, the text is delivered
+        to the control process:
+        
+        @param new_text: text to display
+        @type new_text: string
+        '''
+        if not self.standalone:
+            return
+        
         if self.course_names_text_artist is not None:
             self.course_names_text_artist.remove()
             self.course_names_text_artist = None
@@ -606,19 +668,18 @@ class TSNECourseVisualizer(object):
             wrap=True)
         self.ax_course_list.get_figure().canvas.draw_idle()
 
-    def append_to_course_list_display(self, course_name, refresh_course_name_display=False):
+    #--------------------------
+    # append_to_course_list_display 
+    #----------------
+
+    def append_to_course_list_display(self, course_name):
         '''
         Get already-displayed course descriptions. See whether we already have more
         than our upper limit. If not, find courses descriptions, make a new line for
         the display (course name plus descr, plus description). 
         
-        If refresh_course_name_display is True, erase current list on the display,
-        and replace it with the new content:
-        
-        @param course_name:
-        @type course_name:
-        @param refresh_course_name_display:
-        @type refresh_course_name_display:
+        @param course_name: course name to append
+        @type course_name: string
         '''
 
         try:
@@ -658,63 +719,132 @@ class TSNECourseVisualizer(object):
                     new_text += '; ' + description
         finally:
             if new_text is not None:
-                self.update_course_list_display(new_text, refresh_course_name_display)
-                if self.out_queue is not None:
+                if self.standalone:
+                    self.update_course_list_display(new_text)
+                else:
                     # Notify the main thread, and from there the control surface
                     # to update the control surface's course list panel:
                     self.out_queue.put(Message('update_crse_board', new_text))
 
+    #--------------------------
+    # onpick 
+    #----------------
 
     def onpick(self, event):
+        '''
+        Clicked on a course point. Append that course to the course board
+        display.
+        
+        @param event: click event
+        @type event: 
+        '''
         
         course_name = event.artist.get_label()
         
         # Get existing list in course name list and
         # add the new course to it:
           
-        self.append_to_course_list_display(course_name, refresh_course_name_display=True)
+        self.append_to_course_list_display(course_name)
+
+    #--------------------------
+    # onclick
+    #----------------
 
     def onclick(self, event):
         '''
-        If double click, erase text area:
+        If double click, erase text area. If standalone, the
+        text box in this application is erased. Else a message
+        is sent to the control process.
         
         @param event:
         @type event:
         '''
         
         if event.dblclick and self.course_names_text_artist is not None:
-            self.course_names_text_artist.remove()
-            self.course_names_text_artist = None
-            self.lassoed_course_points    = []
-            self.ax_course_list.get_figure().canvas.draw_idle()
-            if self.out_queue is not None:
+            if self.standalone:
+                self.course_names_text_artist.remove()
+                self.course_names_text_artist = None
+                self.lassoed_course_points    = []
+                self.ax_course_list.get_figure().canvas.draw_idle()
+            else:
                 self.out_queue.put(Message('clear_crse_board'))
             
+            
+    #--------------------------
+    # onenter_key 
+    #----------------
+            
     def onenter_key(self, event):
+        '''
+        Not used
+        
+        @param event:
+        @type event:
+        '''
         if not event.key == "enter":
             return
-        print('Pressed Enter')
-        #******self.disconnect()
+        pass
+        #print('Pressed Enter')
+
+
+    #--------------------------
+    # onselect 
+    #----------------
 
     def onselect(self, verts):
+        '''
+        Handle lassoing by finding the lassoed courses, and 
+        either displaying them on the local course board, or
+        sending an update message to the control process (depending
+        on whether running standalone):
+        
+        @param verts: coordinates of points touched by the lasso
+        @type verts: [[float,float]]
+        '''
+        
         lasso_path = Path(verts)
         self.lassoed_course_points.extend(self.course_points.contains_course_points(lasso_path))
-        # Output list of names to GUI:
+
+        # Course names are labels of the point objects:
         course_names = [course_point.get_label() for course_point in self.lassoed_course_points]
-        # Remove duplicates:
+        
+        # Add course names to the course display:
         for course_name in course_names:
-            self.append_to_course_list_display(course_name,refresh_course_name_display=False)
-        self.ax_course_list.get_figure().canvas.draw_idle()
-        #print('Selected courses: %s.' % course_names)
+            self.append_to_course_list_display(course_name)
+
+        if self.standalone:            
+            self.ax_course_list.get_figure().canvas.draw_idle()
+            #print('Selected courses: %s.' % course_names)
+
+    #--------------------------
+    # disconnect 
+    #----------------
 
     def disconnect(self):
+        '''
+        Not used.
+        '''
         self.lasso.disconnect_events()
         self.ax_tsne.get_figure().canvas.draw_idle()
 
+    #--------------------------
+    # get_acad_grp_to_color_map
+    #----------------
+
     def get_acad_grp_to_color_map(self, course_name_list):
+        '''
+        Create a color map from course names. Every course's academic group
+        gets its own color. To get the academic group from each course name,
+        first try the course_school_dict. If the course is not found there, try
+        a heuristic.
+        
+        @param course_name_list: list of all course names involved in the plot
+        @type course_name_list: [string]
+        '''
 
         color_map = {}
         for course_name in course_name_list:
+            # One course name shows as '\N'; ignore it:
             if course_name == '\\N':
                 continue
             try:
@@ -733,8 +863,18 @@ class TSNECourseVisualizer(object):
                 raise ValueError("Don't have color assignment for course/acadGrp %s/%s." % (course_name, school))
         return color_map
 
+    #--------------------------
+    # group_name_from_course_name 
+    #----------------
+
 
     def group_name_from_course_name(self, course_name):
+        '''
+        Given a course name, try to guess its academic group.
+        
+        @param course_name: name of course
+        @type course_name: string
+        '''
         
         if course_name == '\\N':
             return None
@@ -983,12 +1123,21 @@ class TSNECourseVisualizer(object):
             else:
                 raise ValueError('Could not find subject for %s' % course_name)
         
+    #--------------------------
+    # prepare_course_list_panel 
+    #----------------
+        
     def prepare_course_list_panel(self):
-        #*****self.ax_course_list.facolor('red')
+        '''
+        If running standalone, prepare the course list text pane:
+        '''
+        if not self.standalone:
+            return
         self.ax_course_list.set_title('List of Clicked Courses', fontsize=15)
         #*****self.ax_course_list.suptitle('Double-click to erase', fontsize=10, style='italic')
         self.ax_course_list.axis('off')
 
+    # ------------------------------------------------------- CoursePoints Class ----------------------
 class CoursePoints(dict):
     '''
     A dict mapping nparray coordinate points to scatterplot
@@ -1000,6 +1149,11 @@ class CoursePoints(dict):
     def __init__(self):
         super(CoursePoints, self).__init__()
         
+
+    #--------------------------
+    # __setitem__ 
+    #----------------
+
     def __setitem__(self, coord_pair, course_point):
         '''
         Handle coordinate pairs that are arrays, tuples, or numpy arrays.
@@ -1012,6 +1166,10 @@ class CoursePoints(dict):
         if isinstance(coord_pair, np.ndarray):
             coord_pair = coord_pair.tolist()
         super(CoursePoints, self).__setitem__(tuple(coord_pair), course_point)
+        
+    #--------------------------
+    # contains_course_point 
+    #----------------
         
     def contains_course_point(self, path, coord_pair):
         '''
@@ -1028,6 +1186,10 @@ class CoursePoints(dict):
             return self[coord_pair_tuple]
         else:
             return None 
+    
+    #--------------------------
+    # contains_course_points 
+    #----------------
     
     def contains_course_points(self, path):
         '''
@@ -1047,38 +1209,9 @@ class CoursePoints(dict):
         # method returns an iterator with just the non-masked array/list members:
         scatter_artists = [self[coord_pair] for coord_pair in itertools.compress(coord_pairs, contained_pair_booleans)] 
         return scatter_artists
-
-# class Runtime(object):
-#     
-#     def __init__(self, low_secs, high_secs):
-#         self.t_diff = int(high_secs - low_secs)
-#         
-#     def seconds(self):
-#         return self.t_diff
-# 
-#     def minutes(self):
-#         return int(self.t_diff / 60)
-#     
-#     def hours(self):
-#         return int(self.t_diff / 3600)
-#     
-#     def duration(self):
-#         if self.t_diff() <= 60:
-#             return '%s secs' % self.t_diff()
-#         
-#         if self.minutes() <= 60:
-#             return '%s mins' % self.minutes()
-#         
-#         if self.hours() <= 24:
-#             return '%s hours' % self.hours()
-#         
-#         return '%s days, %s hours, %s minutes' % (self.t_diff % 60*60*24,
-#                                                   self.t_diff % 60*60,
-#                                                   self.t_diff % 60*60*24
-#                                                   )
    
     
-#***************   
+# ----------------------------------------------- Main -------------------
 if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
     data_dir = os.path.join(os.path.dirname(__file__), '../data/')
