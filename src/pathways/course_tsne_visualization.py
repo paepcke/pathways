@@ -659,6 +659,10 @@ class TSNECourseVisualizer(object):
         finally:
             if new_text is not None:
                 self.update_course_list_display(new_text, refresh_course_name_display)
+                if self.out_queue is not None:
+                    # Notify the main thread, and from there the control surface
+                    # to update the control surface's course list panel:
+                    self.out_queue.put(Message('update_crse_board', new_text))
 
 
     def onpick(self, event):
@@ -677,14 +681,14 @@ class TSNECourseVisualizer(object):
         @param event:
         @type event:
         '''
-        #******************
-        self.out_queue.put(Message('test', 10))
-        #******************
+        
         if event.dblclick and self.course_names_text_artist is not None:
             self.course_names_text_artist.remove()
             self.course_names_text_artist = None
             self.lassoed_course_points    = []
             self.ax_course_list.get_figure().canvas.draw_idle()
+            if self.out_queue is not None:
+                self.out_queue.put(Message('clear_crse_board'))
             
     def onenter_key(self, event):
         if not event.key == "enter":
