@@ -21,7 +21,8 @@ import os
 import re
 import sys
 import time
-import warnings
+
+from threading import Timer
 
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
@@ -31,16 +32,13 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from multicoretsne import  MulticoreTSNE as TSNE
 import numpy as np
+
+#from multiprocessing import Queue
+from queue import Empty  # The regular queue's empty exception
+
+from pathways.common_classes import Message
 from pathways.color_constants import colors
 from pathways.course_vector_creation import CourseVectorsCreator
-
-
-def fxn():
-    warnings.warn("deprecated", DeprecationWarning)
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    fxn()                
 
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
@@ -48,6 +46,9 @@ class TSNECourseVisualizer(object):
     '''
     classdocs
     '''
+    
+    # Time between checking instructions queue from parent process:
+    QUEUE_CHECK_INTERVAL = 0.2 # seconds
     
     # Number of courses to list when user clicks
     # on a clump of stacked marks:
@@ -265,13 +266,28 @@ class TSNECourseVisualizer(object):
         ]
     ) 
     
-    def __init__(self, course_vectors_model, axes_array=None):
+    def __init__(self, 
+                 course_vectors_model, 
+                 in_queue, 
+                 out_queue,            
+                 axes_array=None
+                 ):
         '''
-        Constructor
+        
+        @param course_vectors_model:
+        @type course_vectors_model:
+        @param axes_array:
+        @type axes_array:
+        @param in_queue: process queue through which we will receive instructions.
+        @type in_queue: multiprocessing.Queue
+        @param out_queue: process queue through which we will send msgs to the main process
+        @type out_queue: multiprocessing.Queue
         '''
         
         self.course_vectors_model = course_vectors_model
         self.axes_array = axes_array
+        self.in_queue  = in_queue
+        self.out_queue  = out_queue 
         
         # Read the mapping from course name to academic organization 
         # roughly (a.k.a. school):
@@ -304,6 +320,13 @@ class TSNECourseVisualizer(object):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
         self.init_new_plot()
         
+        # Timer that has us check the in-queue for commands:
+        # Create a new timer object. Set the interval to 100 milliseconds
+        # (1000 is default) and tell the timer what function should be called.
+        
+        self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
+        self.timer.start()        
+        
         # If no axes were passed in for us to draw on, we are
         # self contained, and therefore show the plot:
         if self.axes_array is None:
@@ -320,6 +343,34 @@ class TSNECourseVisualizer(object):
         
         runtime = self.plot_tsne_clusters(axes_array=self.axes_array)
         logInfo('Time to build model: %s secs' % runtime)
+
+    def check_in_queue(self):
+        if self.in_queue is None:
+            return
+        # Note: can't use the empty() method here, b/c it's 
+        # unreliable for multiprocess operation:
+        try:
+            control_msg = self.in_queue.get()
+            print("Control msg %s; state: %s" % (control_msg.msg_code, control_msg.state))
+            self.out_queue.put(Message('receipt for %s' % control_msg.msg_code + str(control_msg.state), int(control_msg.state) + 1))
+        except Exception as e:
+            #***************
+            print('type of exception: %s' % type(e))
+            #***************
+            pass 
+
+            
+        # Schedule the next queue check:
+        self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
+        self.timer.start()
+        
+    def handle_msg_from_main(self, msg):
+        if msg.msg_code == 'stop':
+            sys.exit(0)
+        #*********        
+        print('From main: %s, %s' % (msg.msg_code, msg.state))
+        self.out_queue.put(Message('receipt for %s' % msg.msg_code + msg.state), str(msg.state + 1))
+        #*********
         
     def create_course_name_list(self, course_vectors_model):
         '''
@@ -631,6 +682,9 @@ class TSNECourseVisualizer(object):
         @param event:
         @type event:
         '''
+        #******************
+        self.out_queue.put(Message('test', 10))
+        #******************
         if event.dblclick and self.course_names_text_artist is not None:
             self.course_names_text_artist.remove()
             self.course_names_text_artist = None
@@ -1023,16 +1077,13 @@ class CoursePoints(dict):
 #                                                   self.t_diff % 60*60,
 #                                                   self.t_diff % 60*60*24
 #                                                   )
-
-        
-        
- 
+   
     
 #***************   
 if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
-    data_dir = os.path.join(os.path.abspath(__file__), '../data/')
-    vector_creator.load_word2vec_model(os.path.join(data_dir, 'Project/Pathways/Data/Course2VecData/course2vecModelWin10.model'))
-    visualizer = TSNECourseVisualizer(vector_creator)
+    data_dir = os.path.join(os.path.dirname(__file__), '../data/')
+    vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
+    visualizer = TSNECourseVisualizer(vector_creator, in_queue=None, out_queue=None)
     
         
