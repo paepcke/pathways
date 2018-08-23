@@ -6,7 +6,11 @@ NOTE: had to:
 after  
    pip3 install MulticoreTSNE
    
-in MulticoreTSNE's parent dir   
+in MulticoreTSNE's parent dir  
+
+NOTE: for Eclipse to find PyQt5.sip I had to:
+   cp PyQt5_sip-4.19.12-py3.7-macosx-10.7-x86_64.egg/PyQt5/sip.so PyQt5-5.11.2-py3.7-macosx-10.7-x86_64.egg/PyQt5/
+ 
 '''
 
 from collections import OrderedDict
@@ -18,11 +22,12 @@ from logging import info as logInfo
 from logging import warn as logWarn
 import logging
 import os
+import pickle
+from queue import Empty  # The regular queue's empty exception
 import re
 import sys
-import time
-
 from threading import Timer
+import time
 
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
@@ -32,20 +37,21 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from multicoretsne import  MulticoreTSNE as TSNE
 import numpy as np
-
-#from multiprocessing import Queue
-from queue import Empty  # The regular queue's empty exception
-
-from pathways.common_classes import Message
 from pathways.color_constants import colors
+from pathways.common_classes import Message
 from pathways.course_vector_creation import CourseVectorsCreator
 
+
+#from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
 class TSNECourseVisualizer(object):
     '''
     classdocs
     '''
+    
+    # Perplexity used when creating a TSNE model:
+    DEFAULT_PERPLEXITY = 60
     
     # Time between checking instructions queue from parent process:
     QUEUE_CHECK_INTERVAL = 0.2 # seconds
@@ -271,6 +277,9 @@ class TSNECourseVisualizer(object):
                  standalone=True,
                  in_queue=None, 
                  out_queue=None,
+                 perplexity=None,
+                 fittedModelFileName=None,
+                 draftMode=True
                  ):
         '''
         
@@ -283,13 +292,24 @@ class TSNECourseVisualizer(object):
         @type in_queue: multiprocessing.Queue
         @param out_queue: process queue through which we will send msgs to the main process
         @type out_queue: multiprocessing.Queue
+        @param perplexity: perplexity number to use when creating the TSNE model.
+            Reasonable values are between 20 and 100, though this is not enforced.
+        @type perplexity: int
+        @param fittedModelFileName: file name with stored fitted model. Much faster. If
+            None, will compute the model. In non-draft mode takes about 20 minutes. From
+            precomputed file, no time at all.
+        @param draftMode: whether or not only to approximate the clusters using a subset
+            of vectors, and only for a subset of academic groups.
+        @type: boolean
         '''
         
         self.course_vectors_model = course_vectors_model
         self.in_queue   = in_queue
         self.out_queue  = out_queue
-        self.standalone = standalone 
-        
+        self.standalone = standalone
+        if perplexity is None:
+            perplexity = TSNECourseVisualizer.DEFAULT_PERPLEXITY 
+                
         # Read the mapping from course name to academic organization 
         # roughly (a.k.a. school):
         
@@ -319,14 +339,38 @@ class TSNECourseVisualizer(object):
         self.course_name_list = self.create_course_name_list(self.course_vectors_model)                
         # Map each course to the Tableau categorical color of its school (academicGroup):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
-        self.init_new_plot()
+        
+        self.timer = None
+        self.init_new_plot(perplexity=perplexity,
+                           fittedModelFileName=fittedModelFileName, 
+                           draftMode=draftMode)
+        
+        
+    def init_new_plot(self, perplexity=None,
+                      fittedModelFileName=None, 
+                      draftMode=False):
+        
+        # No text in the course_name list yet:
+        self.course_names_text_artist = None
+        if perplexity is None:
+            perplexity=TSNECourseVisualizer.DEFAULT_PERPLEXITY
+        
+        # No course points plotted yet. Has a dictionary interface:
+        self.course_points = CoursePoints()
+        # No course points lassoed yet:
+        self.lassoed_course_points = []
+        
+        runtime = self.plot_tsne_clusters(perplexity=perplexity,
+                                          fittedModelFileName=fittedModelFileName,
+                                          draftMode=draftMode)
+        logInfo('Time to build model: %s secs' % runtime)
         
         # Timer that has us check the in-queue for commands:
         # Create a new timer object. Set the interval to 100 milliseconds
         # (1000 is default) and tell the timer what function should be called.
         # Only relevant if not standalone:
         
-        if not standalone:
+        if not self.standalone and self.timer is None:
             self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
             self.timer.start()
         
@@ -334,17 +378,6 @@ class TSNECourseVisualizer(object):
         
         plt.show()
         
-    def init_new_plot(self):
-        # No text in the course_name list yet:
-        self.course_names_text_artist = None
-        
-        # No course points plotted yet. Has a dictionary interface:
-        self.course_points = CoursePoints()
-        # No course points lassoed yet:
-        self.lassoed_course_points = []
-        
-        runtime = self.plot_tsne_clusters()
-        logInfo('Time to build model: %s secs' % runtime)
 
     # -------------------------------------------  Communication With Control Process if Used -----------
 
@@ -401,12 +434,12 @@ class TSNECourseVisualizer(object):
     # plot_tsne_clusters 
     #----------------
 
-    def plot_tsne_clusters(self, testMode=True):
+    def plot_tsne_clusters(self, fittedModelFileName=None, perplexity=60, draftMode=True):
         '''
         Creates and TSNE self.course_vector_model and plots it.
     
-        @param testMode: if True, only a subset of courses are fit for speed
-        @type testMode: boolean 
+        @param draftMode: if True, only a subset of courses are fit for speed
+        @type draftMode: boolean 
         @return: model construction time in seconds.
         @rtype: int
         
@@ -415,13 +448,14 @@ class TSNECourseVisualizer(object):
         start_time = time.time()
         labels_course_names = []
         tokens_vectors      = []
+        self.perplexity     = perplexity
         
         for course_name in self.course_vectors_model.wv.vocab:
             tokens_vectors.append(self.course_vectors_model.wv.__getitem__(course_name))
             labels_course_names.append(course_name)
         
         logInfo('Mapping %s word vector dimensions to 2D...' % self.course_vectors_model.vector_size)
-        tsne_model = TSNE.MulticoreTSNE(perplexity=60, 
+        tsne_model = TSNE.MulticoreTSNE(perplexity=perplexity, 
                                         n_components=2, 
                                         init='random', 
                                         n_iter=2500, 
@@ -431,24 +465,35 @@ class TSNECourseVisualizer(object):
         logInfo('Done mapping %s word vector dimensions to 2D.' % self.course_vectors_model.vector_size)
         logInfo('Fitting course vectors to t_sne model...')
 
-        np_tokens_vectors = np.array(tokens_vectors)
-        # In test mode we only fit 500 courses to save time: 
-        if testMode:
-            new_values = tsne_model.fit_transform(np_tokens_vectors[0:500,])
+        # If a pre-computed model is to be loaded, do that:
+        if fittedModelFileName is not None:
+            try:
+                self.fitted_vectors = self.restore(fittedModelFileName)
+            except Exception as e:
+                raise(ValueError("Problem loading pre-computed model from file '%s' (%s)" % \
+                                 (fittedModelFileName, repr(e))))
+
         else:
-            new_values = tsne_model.fit_transform(np_tokens_vectors)
+            # Compute a new fit:
+            np_tokens_vectors = np.array(tokens_vectors)
+            # In test mode we only fit 500 courses to save time: 
+            if draftMode:
+                self.fitted_vectors = tsne_model.fit_transform(np_tokens_vectors[0:500,])
+            else:
+                self.fitted_vectors = tsne_model.fit_transform(np_tokens_vectors)
 
         logInfo('Done fitting course vectors to t_sne model.')
     
         x = []
         y = []
-        for value in new_values:
+        for value in self.fitted_vectors:
             x.append(value[0])
             y.append(value[1])
 
         # If running without a separate control surface, 
         # Create and maintain the selected-course board to the 
-        # right of the plot:
+        # right of the plot. In non-standalone the separate
+        # control surface serves this purpose:
         if self.standalone:            
             fig,axes_array = plt.subplots(nrows=1, ncols=2, 
                                           gridspec_kw={'width_ratios':[3,1]},
@@ -461,12 +506,20 @@ class TSNECourseVisualizer(object):
                                             figsize=(15,10)
                                             )
             
-            
         if fig is None:
             fig = self.ax_tsne.get_figure()
             
         self.prepare_course_list_panel()
-        scatter_plot = self.add_course_scatter_points(x, y, labels_course_names, testMode)
+        scatter_plot = self.add_course_scatter_points(x, y, labels_course_names, draftMode)
+        
+        # Get all the course names we actually used above (could be draft mode):
+        self.all_used_course_names = [point.get_label() for point in self.ax_tsne.get_children() if point.get_label() != '']
+        
+        # Get the set of academic groups represented by these used courses:
+        self.used_acad_grps = frozenset([self.group_name_from_course_name(course_name) for course_name in self.all_used_course_names])
+        
+        # Update the window title:
+        self.update_figure_title()
         
         logInfo("Adding legend...")
         self.add_legend(scatter_plot)
@@ -511,7 +564,7 @@ class TSNECourseVisualizer(object):
     # add_course_scatter_points 
     #----------------
     
-    def add_course_scatter_points(self, x, y, labels_course_names, testMode=True):
+    def add_course_scatter_points(self, x, y, labels_course_names, draftMode=False):
         # List of point coordinates:
         self.xys = []
 
@@ -531,7 +584,7 @@ class TSNECourseVisualizer(object):
             
 
             # If in test mode: Thin out the chart for test speed:
-            if testMode:
+            if draftMode:
                 if not (acad_group == 'MED' or acad_group == 'ENGR'):
                     continue
 
@@ -630,7 +683,6 @@ class TSNECourseVisualizer(object):
         if not self.standalone:
             return
         self.ax_course_list.set_title('List of Clicked Courses', fontsize=15)
-        #*****self.ax_course_list.suptitle('Double-click to erase', fontsize=10, style='italic')
         self.ax_course_list.axis('off')
 
     #--------------------------
@@ -853,7 +905,17 @@ class TSNECourseVisualizer(object):
         self.lasso.disconnect_events()
         self.ax_tsne.get_figure().canvas.draw_idle()
 
+    #--------------------------
+    # update_figure_title  
+    #----------------
 
+    def update_figure_title(self):
+        self.ax_tsne.get_figure().suptitle('t_sne Clusters of %s courses in %s (perplexity: %s)' %\
+                                           (len(self.all_used_course_names),
+                                            self.used_acad_grps,
+                                            self.perplexity
+                                            )
+                                           )
      
     # ------------------------------------------------ Preparation Done Once --------------
 
@@ -1171,9 +1233,41 @@ class TSNECourseVisualizer(object):
                 except KeyError:
                     return None
             else:
-                raise ValueError('Could not find subject for %s' % course_name)
+                raise ValueError("Could not find subject for '%s'" % course_name)
         
+        
+    # ------------------------------------------------------- Save/Restore ----------------------
 
+    #--------------------------
+    # save 
+    #----------------
+    
+    def save(self, filename=None):
+        if filename is None:
+            filename = 'tsneModel%sCourses%s_Perplexity_%s' %\
+                (len(self.all_used_course_names),
+                 '_'.join(self.used_acad_grps),
+                 self.perplexity
+                 )
+        important_structs = [self.all_used_course_names,
+                             self.used_acad_grps,
+                             self.perplexity,
+                             self.fitted_vectors]
+        pickle.dump(important_structs, open(filename, 'wb'))
+    
+    #--------------------------
+    # restore 
+    #----------------
+        
+    def restore(self, filename):
+        (self.all_used_course_names,
+         self.used_acad_grps,
+         perplexity,
+         self.fitted_vectors) = pickle.load(open(filename, 'rb'))
+        self.update_figure_title() 
+        return self.fitted_vectors 
+        
+        
     # ------------------------------------------------------- CoursePoints Class ----------------------
 class CoursePoints(dict):
     '''
@@ -1253,6 +1347,7 @@ if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
     data_dir = os.path.join(os.path.dirname(__file__), '../data/')
     vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
-    visualizer = TSNECourseVisualizer(vector_creator, in_queue=None, out_queue=None)
+    #*******visualizer = TSNECourseVisualizer(vector_creator, in_queue=None, out_queue=None)
+    visualizer = TSNECourseVisualizer(vector_creator, in_queue=None, out_queue=None, fittedModelFileName='/tmp/fittedModel.pickle', draftMode=True)
     
         
