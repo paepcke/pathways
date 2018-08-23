@@ -29,6 +29,7 @@ import sys
 from threading import Timer
 import time
 
+import matplotlib
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 from matplotlib.widgets import LassoSelector
@@ -307,8 +308,10 @@ class TSNECourseVisualizer(object):
         self.in_queue   = in_queue
         self.out_queue  = out_queue
         self.standalone = standalone
+        self.draft_mode = draftMode
         if perplexity is None:
-            perplexity = TSNECourseVisualizer.DEFAULT_PERPLEXITY 
+            perplexity = TSNECourseVisualizer.DEFAULT_PERPLEXITY
+        self.perplexity = perplexity 
                 
         # Read the mapping from course name to academic organization 
         # roughly (a.k.a. school):
@@ -341,28 +344,24 @@ class TSNECourseVisualizer(object):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
         
         self.timer = None
-        self.init_new_plot(perplexity=perplexity,
-                           fittedModelFileName=fittedModelFileName, 
-                           draftMode=draftMode)
+        self.init_new_plot(fittedModelFileName=fittedModelFileName)
         
+    def init_new_plot(self, fittedModelFileName=None, perplexity=None):
         
-    def init_new_plot(self, perplexity=None,
-                      fittedModelFileName=None, 
-                      draftMode=False):
-        
+        if perplexity is None:
+            self.perplexity = TSNECourseVisualizer.DEFAULT_PERPLEXITY
+        else:
+            self.perplexity = perplexity 
+
         # No text in the course_name list yet:
         self.course_names_text_artist = None
-        if perplexity is None:
-            perplexity=TSNECourseVisualizer.DEFAULT_PERPLEXITY
         
         # No course points plotted yet. Has a dictionary interface:
         self.course_points = CoursePoints()
         # No course points lassoed yet:
         self.lassoed_course_points = []
         
-        runtime = self.plot_tsne_clusters(perplexity=perplexity,
-                                          fittedModelFileName=fittedModelFileName,
-                                          draftMode=draftMode)
+        runtime = self.plot_tsne_clusters(fittedModelFileName=fittedModelFileName)
         logInfo('Time to build model: %s secs' % runtime)
         
         # Timer that has us check the in-queue for commands:
@@ -434,12 +433,10 @@ class TSNECourseVisualizer(object):
     # plot_tsne_clusters 
     #----------------
 
-    def plot_tsne_clusters(self, fittedModelFileName=None, perplexity=60, draftMode=True):
+    def plot_tsne_clusters(self, fittedModelFileName=None):
         '''
         Creates and TSNE self.course_vector_model and plots it.
     
-        @param draftMode: if True, only a subset of courses are fit for speed
-        @type draftMode: boolean 
         @return: model construction time in seconds.
         @rtype: int
         
@@ -448,14 +445,13 @@ class TSNECourseVisualizer(object):
         start_time = time.time()
         labels_course_names = []
         tokens_vectors      = []
-        self.perplexity     = perplexity
         
         for course_name in self.course_vectors_model.wv.vocab:
             tokens_vectors.append(self.course_vectors_model.wv.__getitem__(course_name))
             labels_course_names.append(course_name)
         
         logInfo('Mapping %s word vector dimensions to 2D...' % self.course_vectors_model.vector_size)
-        tsne_model = TSNE.MulticoreTSNE(perplexity=perplexity, 
+        tsne_model = TSNE.MulticoreTSNE(perplexity=self.perplexity, 
                                         n_components=2, 
                                         init='random', 
                                         n_iter=2500, 
@@ -471,13 +467,12 @@ class TSNECourseVisualizer(object):
                 self.fitted_vectors = self.restore(fittedModelFileName)
             except Exception as e:
                 raise(ValueError("Problem loading pre-computed model from file '%s' (%s)" % \
-                                 (fittedModelFileName, repr(e))))
-
+                                  (fittedModelFileName, repr(e))))
         else:
             # Compute a new fit:
             np_tokens_vectors = np.array(tokens_vectors)
             # In test mode we only fit 500 courses to save time: 
-            if draftMode:
+            if self.draft_mode:
                 self.fitted_vectors = tsne_model.fit_transform(np_tokens_vectors[0:500,])
             else:
                 self.fitted_vectors = tsne_model.fit_transform(np_tokens_vectors)
@@ -510,15 +505,17 @@ class TSNECourseVisualizer(object):
             fig = self.ax_tsne.get_figure()
             
         self.prepare_course_list_panel()
-        scatter_plot = self.add_course_scatter_points(x, y, labels_course_names, draftMode)
+        scatter_plot = self.add_course_scatter_points(x, y, labels_course_names)
         
         # Get all the course names we actually used above (could be draft mode):
         self.all_used_course_names = [point.get_label() for point in self.ax_tsne.get_children() if point.get_label() != '']
         
         # Get the set of academic groups represented by these used courses:
-        self.used_acad_grps = frozenset([self.group_name_from_course_name(course_name) for course_name in self.all_used_course_names])
+        self.used_acad_grps = frozenset([self.group_name_from_course_name(course_name) for course_name in self.all_used_course_names\
+                                         if not isinstance(course_name, matplotlib.text.Text)])
         
-        # Update the window title:
+        # Update the window title to reflect the number of courses
+        # and academic groups being displayed:
         self.update_figure_title()
         
         logInfo("Adding legend...")
@@ -564,7 +561,7 @@ class TSNECourseVisualizer(object):
     # add_course_scatter_points 
     #----------------
     
-    def add_course_scatter_points(self, x, y, labels_course_names, draftMode=False):
+    def add_course_scatter_points(self, x, y, labels_course_names):
         # List of point coordinates:
         self.xys = []
 
@@ -584,7 +581,7 @@ class TSNECourseVisualizer(object):
             
 
             # If in test mode: Thin out the chart for test speed:
-            if draftMode:
+            if self.draft_mode:
                 if not (acad_group == 'MED' or acad_group == 'ENGR'):
                     continue
 
@@ -838,14 +835,18 @@ class TSNECourseVisualizer(object):
         @type event:
         '''
         
-        if event.dblclick and self.course_names_text_artist is not None:
-            if self.standalone:
-                self.course_names_text_artist.remove()
-                self.course_names_text_artist = None
-                self.lassoed_course_points    = []
-                self.ax_course_list.get_figure().canvas.draw_idle()
-            else:
-                self.out_queue.put(Message('clear_crse_board'))
+        if not event.dblclick:
+            return
+        # Are we standalone, and therefore have a course board?
+        # If so, then is there anything on that course board?
+        if self.standalone and self.course_names_text_artist is not None:        
+            self.course_names_text_artist.remove()
+            self.course_names_text_artist = None
+            self.ax_course_list.get_figure().canvas.draw_idle()
+        else:
+            self.lassoed_course_points    = []
+            # We have a control board peer window. Tell it to clear the board:
+            self.out_queue.put(Message('clear_crse_board'))
             
             
     #--------------------------
@@ -910,9 +911,9 @@ class TSNECourseVisualizer(object):
     #----------------
 
     def update_figure_title(self):
-        self.ax_tsne.get_figure().suptitle('t_sne Clusters of %s courses in %s (perplexity: %s)' %\
+        self.ax_tsne.get_figure().suptitle('t_sne Clusters of %s courses in %s; (perplexity: %s)' %\
                                            (len(self.all_used_course_names),
-                                            self.used_acad_grps,
+                                            ','.join(self.used_acad_grps),
                                             self.perplexity
                                             )
                                            )
@@ -1244,11 +1245,14 @@ class TSNECourseVisualizer(object):
     
     def save(self, filename=None):
         if filename is None:
-            filename = 'tsneModel%sCourses%s_Perplexity_%s' %\
+            filename = '/tmp/tsneModel_%sCourses_%s_Perplexity_%s' %\
                 (len(self.all_used_course_names),
                  '_'.join(self.used_acad_grps),
                  self.perplexity
                  )
+            if self.draft_mode:
+                filename += '_draft'
+            filename += '.pickle'
         important_structs = [self.all_used_course_names,
                              self.used_acad_grps,
                              self.perplexity,
@@ -1262,9 +1266,8 @@ class TSNECourseVisualizer(object):
     def restore(self, filename):
         (self.all_used_course_names,
          self.used_acad_grps,
-         perplexity,
+         self.perplexity,
          self.fitted_vectors) = pickle.load(open(filename, 'rb'))
-        self.update_figure_title() 
         return self.fitted_vectors 
         
         
@@ -1348,6 +1351,8 @@ if __name__ == '__main__':
     data_dir = os.path.join(os.path.dirname(__file__), '../data/')
     vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
     #*******visualizer = TSNECourseVisualizer(vector_creator, in_queue=None, out_queue=None)
-    visualizer = TSNECourseVisualizer(vector_creator, in_queue=None, out_queue=None, fittedModelFileName='/tmp/fittedModel.pickle', draftMode=True)
-    
-        
+    visualizer = TSNECourseVisualizer(vector_creator, 
+                                      in_queue=None, 
+                                      out_queue=None, 
+                                      fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
+                                      draftMode=True)
