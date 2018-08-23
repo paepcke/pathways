@@ -39,7 +39,6 @@ from queue import Empty  # The regular queue's empty exception
 from pathways.common_classes import Message
 from pathways.color_constants import colors
 from pathways.course_vector_creation import CourseVectorsCreator
-from docutils.readers import standalone
 
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
@@ -325,9 +324,13 @@ class TSNECourseVisualizer(object):
         # Timer that has us check the in-queue for commands:
         # Create a new timer object. Set the interval to 100 milliseconds
         # (1000 is default) and tell the timer what function should be called.
+        # Only relevant if not standalone:
         
-        self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
-        self.timer.start()        
+        if not standalone:
+            self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
+            self.timer.start()
+        
+        self.send_to_main(Message('ready', 'tsne'))
         
         plt.show()
         
@@ -346,6 +349,22 @@ class TSNECourseVisualizer(object):
     # -------------------------------------------  Communication With Control Process if Used -----------
 
     #--------------------------
+    # send_to_main 
+    #----------------
+
+    def send_to_main(self, msg):
+        '''
+        Sends msg to the out queue, i.e. up to the process
+        that spawned us (if we are not running standalone).
+        
+        @param msg: message object to send
+        @type msg: Message
+        '''
+        if self.out_queue is None:
+            return
+        self.out_queue.put(msg)
+
+    #--------------------------
     # check_in_queue
     #----------------
 
@@ -355,7 +374,7 @@ class TSNECourseVisualizer(object):
         # Note: can't use the empty() method here, b/c it's 
         # unreliable for multiprocess operation:
         try:
-            control_msg = self.in_queue.get()
+            control_msg = self.in_queue.get(block=False)
             print("Control msg %s; state: %s" % (control_msg.msg_code, control_msg.state))
             self.handle_msg_from_main(control_msg)
         except Empty:
@@ -375,27 +394,7 @@ class TSNECourseVisualizer(object):
         #*********        
         print('From main: %s, %s' % (msg.msg_code, msg.state))
         #*********
-        
-    # ------------------------------------------------ Preparation Done Once --------------
-
-    #--------------------------
-    # create_course_name_list 
-    #----------------
-    
-    def create_course_name_list(self, course_vectors_model):
-        '''
-        Create a list of tokens, i.e. course names as they are ordered
-        in the model's vocabulary list.
-        
-        @param course_vectors_model: trained skip gram model for the input 'sentences':
-        @type course_vectors_model: CourseVectorsCreator instance
-        '''
-        
-        course_names = course_vectors_model.wv.vocab.keys()
-        return course_names
-        # Remove '\N' entries:
-        # return list(filter(lambda name: name != '\\N', course_names))
-    
+      
     # ------------------------------------------------- Create Plot From Scratch ---------
         
     #--------------------------
@@ -467,40 +466,8 @@ class TSNECourseVisualizer(object):
             fig = self.ax_tsne.get_figure()
             
         self.prepare_course_list_panel()
-        # List of point coordinates:
-        self.xys = []
-
-        logInfo("Adding course scatter points...")
-        for i in range(len(x)):
-            try:
-                course_name = labels_course_names[i]
-            except IndexError:
-                logWarn("Ran out of course names at i=%s" % i)
-                continue
-            acad_group = self.group_name_from_course_name(course_name)
-            if acad_group is None:
-                # One course has name '\\N', which obviously has
-                # no acad group associated with it. Skip over that
-                # data point:
-                continue
-            
-
-            # If in test mode: Thin out the chart for test speed:
-            if testMode:
-                if not (acad_group == 'MED' or acad_group == 'ENGR'):
-                    continue
-
-            scatter_plot = self.ax_tsne.scatter(x[i],y[i],
-                                      c=self.color_map[course_name],
-                                      picker=5,
-                                      label=labels_course_names[i])
-            # Add this point's coords to our list. The offsets are 
-            # a list of this scatterplot's points. But there is only 
-            # a single one, since we add one by one:
-            
-            self.course_points[scatter_plot.get_offsets()[0]] = scatter_plot
-
-        logInfo("Done adding course scatter points.")
+        scatter_plot = self.add_course_scatter_points(x, y, labels_course_names, testMode)
+        
         logInfo("Adding legend...")
         self.add_legend(scatter_plot)
         logInfo("Done adding legend.")
@@ -539,6 +506,47 @@ class TSNECourseVisualizer(object):
 
         runtime = int(time.time() - start_time)
         return runtime
+
+    #--------------------------
+    # add_course_scatter_points 
+    #----------------
+    
+    def add_course_scatter_points(self, x, y, labels_course_names, testMode=True):
+        # List of point coordinates:
+        self.xys = []
+
+        logInfo("Adding course scatter points...")
+        for i in range(len(x)):
+            try:
+                course_name = labels_course_names[i]
+            except IndexError:
+                logWarn("Ran out of course names at i=%s" % i)
+                continue
+            acad_group = self.group_name_from_course_name(course_name)
+            if acad_group is None:
+                # One course has name '\\N', which obviously has
+                # no acad group associated with it. Skip over that
+                # data point:
+                continue
+            
+
+            # If in test mode: Thin out the chart for test speed:
+            if testMode:
+                if not (acad_group == 'MED' or acad_group == 'ENGR'):
+                    continue
+
+            scatter_plot = self.ax_tsne.scatter(x[i],y[i],
+                                      c=self.color_map[course_name],
+                                      picker=5,
+                                      label=labels_course_names[i])
+            # Add this point's coords to our list. The offsets are 
+            # a list of this scatterplot's points. But there is only 
+            # a single one, since we add one by one:
+            
+            self.course_points[scatter_plot.get_offsets()[0]] = scatter_plot
+        logInfo("Done adding course scatter points.")
+        return scatter_plot
+        
 
     #--------------------------
     # add_legend 
@@ -612,30 +620,18 @@ class TSNECourseVisualizer(object):
         annot.get_bbox_patch().set_alpha(0.4)
 
     #--------------------------
-    # hover 
+    # prepare_course_list_panel 
     #----------------
-
-    def hover(self, annot, event):
-        vis = annot.get_visible()
-        fig = self.ax_tsne.get_figure()
         
-        if event.inaxes == self.ax_tsne:
-            try:
-                # plot_element.contains(event) returns a two-tuple: (False, {'ind': array([], dtype=int32)})
-                # Look for the first dot where contains is True:
-                mark_ind = next(i for i,plot_element in enumerate(self.ax_tsne.get_children()) 
-                                if plot_element.contains(event)[0] and isinstance(plot_element, tsne_dot_class) 
-                                )
-            except StopIteration:
-                mark_ind = None
-            if mark_ind is not None:
-                self.update_annot(mark_ind, annot)
-                annot.set_visible(True)
-                fig.canvas.draw_idle()
-            else:
-                if vis:
-                    annot.set_visible(False)
-                    fig.canvas.draw_idle()
+    def prepare_course_list_panel(self):
+        '''
+        If running standalone, prepare the course list text pane:
+        '''
+        if not self.standalone:
+            return
+        self.ax_course_list.set_title('List of Clicked Courses', fontsize=15)
+        #*****self.ax_course_list.suptitle('Double-click to erase', fontsize=10, style='italic')
+        self.ax_course_list.axis('off')
 
     #--------------------------
     # update_course_list_display 
@@ -725,6 +721,36 @@ class TSNECourseVisualizer(object):
                     # Notify the main thread, and from there the control surface
                     # to update the control surface's course list panel:
                     self.out_queue.put(Message('update_crse_board', new_text))
+                    
+    # ---------------------------------------- UI Dynamics --------------
+    
+    #--------------------------
+    # hover 
+    #----------------
+
+    def hover(self, annot, event):
+        vis = annot.get_visible()
+        fig = self.ax_tsne.get_figure()
+        
+        if event.inaxes == self.ax_tsne:
+            try:
+                # plot_element.contains(event) returns a two-tuple: (False, {'ind': array([], dtype=int32)})
+                # Look for the first dot where contains is True:
+                mark_ind = next(i for i,plot_element in enumerate(self.ax_tsne.get_children()) 
+                                if plot_element.contains(event)[0] and isinstance(plot_element, tsne_dot_class) 
+                                )
+            except StopIteration:
+                mark_ind = None
+            if mark_ind is not None:
+                self.update_annot(mark_ind, annot)
+                annot.set_visible(True)
+                fig.canvas.draw_idle()
+            else:
+                if vis:
+                    annot.set_visible(False)
+                    fig.canvas.draw_idle()
+
+
 
     #--------------------------
     # onpick 
@@ -827,6 +853,29 @@ class TSNECourseVisualizer(object):
         self.lasso.disconnect_events()
         self.ax_tsne.get_figure().canvas.draw_idle()
 
+
+     
+    # ------------------------------------------------ Preparation Done Once --------------
+
+    #--------------------------
+    # create_course_name_list 
+    #----------------
+    
+    def create_course_name_list(self, course_vectors_model):
+        '''
+        Create a list of tokens, i.e. course names as they are ordered
+        in the model's vocabulary list.
+        
+        @param course_vectors_model: trained skip gram model for the input 'sentences':
+        @type course_vectors_model: CourseVectorsCreator instance
+        '''
+        
+        course_names = course_vectors_model.wv.vocab.keys()
+        return course_names
+        # Remove '\N' entries:
+        # return list(filter(lambda name: name != '\\N', course_names))
+ 
+
     #--------------------------
     # get_acad_grp_to_color_map
     #----------------
@@ -863,10 +912,11 @@ class TSNECourseVisualizer(object):
                 raise ValueError("Don't have color assignment for course/acadGrp %s/%s." % (course_name, school))
         return color_map
 
+    # --------------------------------------- Lookup Methods -------------
+
     #--------------------------
     # group_name_from_course_name 
     #----------------
-
 
     def group_name_from_course_name(self, course_name):
         '''
@@ -1123,19 +1173,6 @@ class TSNECourseVisualizer(object):
             else:
                 raise ValueError('Could not find subject for %s' % course_name)
         
-    #--------------------------
-    # prepare_course_list_panel 
-    #----------------
-        
-    def prepare_course_list_panel(self):
-        '''
-        If running standalone, prepare the course list text pane:
-        '''
-        if not self.standalone:
-            return
-        self.ax_course_list.set_title('List of Clicked Courses', fontsize=15)
-        #*****self.ax_course_list.suptitle('Double-click to erase', fontsize=10, style='italic')
-        self.ax_course_list.axis('off')
 
     # ------------------------------------------------------- CoursePoints Class ----------------------
 class CoursePoints(dict):
