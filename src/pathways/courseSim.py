@@ -6,8 +6,7 @@ Created on Aug 19, 2018
 from multiprocessing import Process, Queue
 import os
 from queue import Empty  # The regular queue's empty exception
-
-import matplotlib
+from time import sleep
 
 from pathways.common_classes import Message
 from pathways.control_surface_process import ControlSurface
@@ -15,11 +14,10 @@ from pathways.course_tsne_visualization import TSNECourseVisualizer
 from pathways.course_vector_creation import CourseVectorsCreator
 
 
+#import matplotlib
 #from pathways.common_classes import Message
 # Likely not needed put in the debug the crash
-matplotlib.use("Qt5Agg")
-
-
+#matplotlib.use("Qt5Agg")
 class TsneCourseExplorer(object):
     '''
     Main thread
@@ -29,6 +27,9 @@ class TsneCourseExplorer(object):
     def __init__(self):
         '''
         '''
+        
+        self.debug = True
+        
         data_dir = os.path.join(os.path.dirname(__file__), '../data/')
         ui_dir   = os.path.join(os.path.dirname(__file__), '../qtui/')
         ui_file  = os.path.join(ui_dir, 'courseTsne.ui')
@@ -63,19 +64,26 @@ class TsneCourseExplorer(object):
         tsne_process.start()
         
         self.keep_going = True
-        while self.keep_going:
-            try:
-                control_msg = self.control_surface_from_queue.get(block=True, timeout=TsneCourseExplorer.QUEUE_LISTEN_TIME)
-                self.handle_msg_from_control(control_msg)
-            except Empty:
-                pass
-
-            try:
-                tsne_msg = self.tsne_viz_from_queue.get(TsneCourseExplorer.QUEUE_LISTEN_TIME)
-                self.handle_msg_from_tse(tsne_msg)                
-            except Empty:
-                pass
-           
+        try:
+            while self.keep_going:
+                try:
+                    #*****control_msg = self.control_surface_from_queue.get(block=True, timeout=TsneCourseExplorer.QUEUE_LISTEN_TIME)
+                    control_msg = self.control_surface_from_queue.get(block=False)
+                    self.handle_msg_from_control(control_msg)
+                except Empty:
+                    pass
+    
+                try:
+                    #*****tsne_msg = self.tsne_viz_from_queue.get(TsneCourseExplorer.QUEUE_LISTEN_TIME)
+                    tsne_msg = self.tsne_viz_from_queue.get(block=False)
+                    self.handle_msg_from_tse(tsne_msg)                
+                except Empty:
+                    pass
+                # Delay before checking queues again:
+                sleep(0.01)
+        except Exception as e:
+            print("Left main control loop: %s." % repr(e))
+        
         # Wait for control surface to stop
         # in response to the Stop button, or window closure:
         control_surface_process.join()
@@ -90,6 +98,9 @@ class TsneCourseExplorer(object):
             self.keep_going = False
             self.tsne_viz_to_queue.put('stop')
         else:
+            if self.debug:
+                print('Sending from main to tsne: %s, %s' % (msg.msg_code, msg.state))
+            
             self.tsne_viz_to_queue.put(msg)
     
     def handle_msg_from_tse(self, msg):

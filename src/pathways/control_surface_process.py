@@ -33,6 +33,8 @@ class ControlSurface(object):
     def __init__(self, ui_file, out_queue=None, in_queue=None):
         super().__init__()
     
+        self.debug = True
+    
         self.ui_file = ui_file
         self.out_queue = out_queue    
         self.in_queue = in_queue            
@@ -41,6 +43,18 @@ class ControlSurface(object):
                             'UgChk', 'EarthChk', 'EducChk', 'VpueChk',
                             'LawChk', 'OthersChk'
                             ]
+        self.chkBox_name_to_acac_grp = {
+            'EngrChk': 'ENGR', 
+            'GsbChk': 'GSB', 
+            'HandSChk': 'H&S', 
+            'MedChk': 'MED', 
+            'UgChk': 'UG', 
+            'EarthChk': 'EARTH', 
+            'EducChk': 'EDUC', 
+            'VpueChk': 'VPUE',
+            'LawChk': 'LAW', 
+            'OthersChk': 'OTHERS'
+            }
 
         self.app = QApplication()
         self.control_surface_widget = ContainerWidget(self.ui_file)
@@ -105,15 +119,13 @@ class ControlSurface(object):
         chkBoxObj.stateChanged.connect(functools.partial(slot_func, chkBox_name))
                     
     def slot_recompute_btn(self):
-        if self.out_queue is not None:
-            self.out_queue.put(Message('recompute'))
-        
-        print('In control process: Button pushed')
+        self.write_to_main('recompute', None)
+        # print('In control process: Button pushed')
         
     def slot_quit_btn(self):
         print('In control process: quit button')
+        self.write_to_main('stop', None)
         if self.out_queue is not None:
-            self.out_queue.put(Message('stop'))
             self.out_queue.close()
         self.app.exit()
     
@@ -124,9 +136,13 @@ class ControlSurface(object):
             self.write_to_main('set_draft_mode', False)
         
     def slot_acad_grp_chk(self, chkBox_name, new_state):
-        print('ChkBox %s: %s' % (chkBox_name, new_state))
-        # Update status of check boxes:
-        self.chk_box_obj_dict[chkBox_name] = new_state
+        # print('ChkBox %s: %s' % (chkBox_name, new_state))
+        active_acad_grps = [self.chkBox_name_to_acac_grp[chkBox_name] 
+                            for (chkBox_name, chkBox_obj) in self.chk_box_obj_dict.items()  
+                            if chkBox_obj.isChecked()
+                            ]
+        
+        self.write_to_main('set_acad_grps', active_acad_grps)
         
     def check_in_queue(self):
         if self.in_queue is None:
@@ -135,13 +151,20 @@ class ControlSurface(object):
         # unreliable for multiprocess operation:
         try:
             control_msg = self.in_queue.get(block=False)
-            print("Control msg %s; state: %s" % (control_msg.msg_code, control_msg.state))
+            if self.debug:
+                print("In to cntrl from main: %s; state: %s" % (control_msg.msg_code, control_msg.state))
             self.handle_msg_from_main(control_msg)
         except Empty:
             pass 
         
     def write_to_main(self, msg_code, state):
-        self.out_queue.put(Message(msg_code, state))
+        if self.debug:
+            if self.out_queue is None:
+                print('Would send from control to main: %s, %s' % (msg_code, state))
+            else:
+                print('Sending from control to main: %s, %s' % (msg_code, state))
+        if self.out_queue is not None:
+            self.out_queue.put(Message(msg_code, state))
         
     def handle_msg_from_main(self, msg):
         if msg.msg_code == 'update_crse_board':

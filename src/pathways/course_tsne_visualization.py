@@ -257,7 +257,7 @@ class TSNECourseVisualizer(object):
     # categorical colors. Use one color to lump together acad groups
     # we are less interested in to help unclutter the scatterplot:
     
-    LUMP_COLOR = colors['darkgray'].hex_format()
+    LUMP_COLOR = colors['black'].hex_format()
     course_color_dict   = OrderedDict(
         [
             ('ENGR' ,  colors['blue'].hex_format()),
@@ -268,11 +268,11 @@ class TSNECourseVisualizer(object):
             ('EARTH',  colors['brick'].hex_format()),     # Brown
             ('EDUC' ,  colors['bisque1'].hex_format()),   # Light brownish
             ('VPUE' ,  colors['cyan2'].hex_format()),
-            ('ATH'  ,  LUMP_COLOR),
-            ('LAW'  ,  LUMP_COLOR),
-            ('VPSA' ,  LUMP_COLOR),
-            ('VPTL' ,  LUMP_COLOR),
-            ('CSP'  ,  LUMP_COLOR)
+            ('LAW'  ,  colors['darkgray'].hex_format()),
+            ('ATH'  ,  LUMP_COLOR), # 'Others'
+            ('VPSA' ,  LUMP_COLOR), # 'Others'
+            ('VPTL' ,  LUMP_COLOR), # 'Others'
+            ('CSP'  ,  LUMP_COLOR)  # 'Others'
         ]
     ) 
     
@@ -306,6 +306,8 @@ class TSNECourseVisualizer(object):
             of vectors, and only for a subset of academic groups.
         @type: boolean
         '''
+    
+        self.debug = True
         
         self.course_vectors_model = course_vectors_model
         self.in_queue   = in_queue
@@ -346,6 +348,13 @@ class TSNECourseVisualizer(object):
         # Map each course to the Tableau categorical color of its school (academicGroup):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
         
+        # Set of all academic groups we know about:
+        self.school_set = frozenset(TSNECourseVisualizer.course_color_dict.keys())
+        
+        # Academic groups that would be included in a
+        # recomputation:
+        self.active_acad_grps = list(self.school_set)
+        
         self.timer = None
         self.init_new_plot(fittedModelFileName=fittedModelFileName)
         
@@ -355,7 +364,7 @@ class TSNECourseVisualizer(object):
             self.perplexity = TSNECourseVisualizer.DEFAULT_PERPLEXITY
         else:
             self.perplexity = perplexity 
-
+            
         # No text in the course_name list yet:
         self.course_names_text_artist = None
         
@@ -410,11 +419,17 @@ class TSNECourseVisualizer(object):
         # unreliable for multiprocess operation:
         try:
             control_msg = self.in_queue.get(block=False)
-            print("Control msg %s; state: %s" % (control_msg.msg_code, control_msg.state))
             self.handle_msg_from_main(control_msg)
         except Empty:
             pass 
-            
+        
+        # Check whether an earlier command told us 
+        # to create a new chart. If so, the method 
+        # handle_msg_from_main() method will have left
+        # a flag for us after closing the current plot:
+        
+        ####if self.create_new_plot
+        
         # Schedule the next queue check:
         self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
         self.timer.start()
@@ -424,16 +439,23 @@ class TSNECourseVisualizer(object):
     #----------------
         
     def handle_msg_from_main(self, msg):
+        
+        if self.debug:        
+            print('From main to tsne: %s, %s' % (msg.msg_code, msg.state))
+        
         msg_code = msg.msg_code
         if msg_code == 'stop':
             sys.exit(0)
         elif msg_code == 'set_draft_mode':
             self.draft_mode = msg.state
+        elif msg_code == 'set_acad_grps':
+            self.active_acad_grps = msg.state
+            self.update_figure_title()
+        elif msg_code == 'recompute':
+            #****plt.close()
+            plt.clf()
+            self.init_new_plot()
         
-        #*********        
-        print('From main: %s, %s' % (msg.msg_code, msg.state))
-        #*********
-      
     # ------------------------------------------------- Create Plot From Scratch ---------
         
     #--------------------------
@@ -472,10 +494,12 @@ class TSNECourseVisualizer(object):
         if fittedModelFileName is not None:
             try:
                 self.fitted_vectors = self.restore(fittedModelFileName)
+                self.update_figure_title()
             except Exception as e:
                 raise(ValueError("Problem loading pre-computed model from file '%s' (%s)" % \
                                   (fittedModelFileName, repr(e))))
         else:
+            #****** Pick from self.active_acad_grps
             # Compute a new fit:
             np_tokens_vectors = np.array(tokens_vectors)
             # In test mode we only fit 500 courses to save time: 
@@ -517,7 +541,10 @@ class TSNECourseVisualizer(object):
         # Get all the course names we actually used above (could be draft mode):
         self.all_used_course_names = [point.get_label() for point in self.ax_tsne.get_children() if point.get_label() != '']
         
-        # Get the set of academic groups represented by these used courses:
+        # Get the set of academic groups represented by these used courses.
+        # That's different from the self.active_acad_grps list. That one
+        # is the acad groups we are to limit ourselves to irrespective of
+        # courses:
         self.used_acad_grps = frozenset([self.group_name_from_course_name(course_name) for course_name in self.all_used_course_names\
                                          if not isinstance(course_name, matplotlib.text.Text)])
         
@@ -586,11 +613,19 @@ class TSNECourseVisualizer(object):
                 # data point:
                 continue
             
+            # If we are currently excluding the found acad group,
+            # skip it:
+            if acad_group not in self.active_acad_grps:
+                continue
 
-            # If in test mode: Thin out the chart for test speed:
-            if self.draft_mode:
-                if not (acad_group == 'MED' or acad_group == 'ENGR'):
-                    continue
+#************************
+            # Decide whether just picking 500 in draft mode is fast enough
+            # Else ignore the wanted groups and just do the two below:
+#             # If in test mode: Thin out the chart for test speed:
+#             if self.draft_mode:
+#                 if not (acad_group == 'MED' or acad_group == 'ENGR'):
+#                     continue
+#************************
 
             scatter_plot = self.ax_tsne.scatter(x[i],y[i],
                                       c=self.color_map[course_name],
@@ -920,7 +955,7 @@ class TSNECourseVisualizer(object):
     def update_figure_title(self):
         self.ax_tsne.get_figure().suptitle('t_sne Clusters of %s courses in %s; %s quality (perplexity: %s)' %\
                                            (len(self.all_used_course_names),
-                                            ','.join(self.used_acad_grps),
+                                            ','.join(self.active_acad_grps),
                                             'draft' if self.draft_mode else 'full',
                                             self.perplexity
                                             )
