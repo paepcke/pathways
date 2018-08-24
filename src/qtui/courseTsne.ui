@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>755</width>
-    <height>578</height>
+    <width>863</width>
+    <height>660</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -35,7 +35,7 @@
       <x>0</x>
       <y>0</y>
       <width>741</width>
-      <height>537</height>
+      <height>592</height>
      </rect>
     </property>
     <layout class="QHBoxLayout" name="ControlPanel">
@@ -402,6 +402,13 @@ pad-left: 30;</string>
           </layout>
          </item>
          <item>
+          <widget class="QCheckBox" name="draftModeChk">
+           <property name="text">
+            <string>Draft mode</string>
+           </property>
+          </widget>
+         </item>
+         <item>
           <widget class="QPushButton" name="Top10Btn">
            <property name="text">
             <string>Top 10 Like This:</string>
@@ -451,6 +458,13 @@ pad-left: 30;</string>
         </widget>
        </item>
        <item>
+        <widget class="QPushButton" name="clrBoardButton">
+         <property name="text">
+          <string>Clear Course Board</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QPushButton" name="quitBtn">
          <property name="text">
           <string>Quit</string>
@@ -483,7 +497,7 @@ pad-left: 30;</string>
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>755</width>
+     <width>863</width>
      <height>22</height>
     </rect>
    </property>

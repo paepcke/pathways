@@ -85,9 +85,12 @@ class TsneCourseExplorer(object):
 
     def handle_msg_from_control(self, msg):
         print("In main: Msg from control: %s, %s" % (msg.msg_code, msg.state))
-        if msg.msg_code == 'stop':
+        msg_code = msg.msg_code
+        if msg_code == 'stop':
             self.keep_going = False
             self.tsne_viz_to_queue.put('stop')
+        else:
+            self.tsne_viz_to_queue.put(msg)
     
     def handle_msg_from_tse(self, msg):
         if msg.msg_code == 'update_crse_board' or\

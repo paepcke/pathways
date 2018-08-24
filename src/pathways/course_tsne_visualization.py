@@ -51,6 +51,9 @@ class TSNECourseVisualizer(object):
     classdocs
     '''
     
+    # Where to put saved displays:
+    DEFAULT_CACHE_FILE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
+    
     # Perplexity used when creating a TSNE model:
     DEFAULT_PERPLEXITY = 60
     
@@ -421,8 +424,12 @@ class TSNECourseVisualizer(object):
     #----------------
         
     def handle_msg_from_main(self, msg):
-        if msg.msg_code == 'stop':
+        msg_code = msg.msg_code
+        if msg_code == 'stop':
             sys.exit(0)
+        elif msg_code == 'set_draft_mode':
+            self.draft_mode = msg.state
+        
         #*********        
         print('From main: %s, %s' % (msg.msg_code, msg.state))
         #*********
@@ -911,9 +918,10 @@ class TSNECourseVisualizer(object):
     #----------------
 
     def update_figure_title(self):
-        self.ax_tsne.get_figure().suptitle('t_sne Clusters of %s courses in %s; (perplexity: %s)' %\
+        self.ax_tsne.get_figure().suptitle('t_sne Clusters of %s courses in %s; %s quality (perplexity: %s)' %\
                                            (len(self.all_used_course_names),
                                             ','.join(self.used_acad_grps),
+                                            'draft' if self.draft_mode else 'full',
                                             self.perplexity
                                             )
                                            )
@@ -1238,6 +1246,23 @@ class TSNECourseVisualizer(object):
         
         
     # ------------------------------------------------------- Save/Restore ----------------------
+    
+    #--------------------------
+    # get_tsne_file_name  
+    #----------------
+    
+    def get_tsne_file_name(self):
+        filename = os.path.join(TSNECourseVisualizer.DEFAULT_CACHE_FILE_DIR, 'tsneModel_%sCourses_%s_Perplexity_%s' %\
+            (len(self.all_used_course_names),
+             '_'.join(self.used_acad_grps),
+             self.perplexity
+             ))
+        if self.draft_mode:
+            filename += '_draftQual'
+        else:
+            filename += '_fullQual'
+        filename += '.pickle'
+        
 
     #--------------------------
     # save 
@@ -1245,17 +1270,11 @@ class TSNECourseVisualizer(object):
     
     def save(self, filename=None):
         if filename is None:
-            filename = '/tmp/tsneModel_%sCourses_%s_Perplexity_%s' %\
-                (len(self.all_used_course_names),
-                 '_'.join(self.used_acad_grps),
-                 self.perplexity
-                 )
-            if self.draft_mode:
-                filename += '_draft'
-            filename += '.pickle'
+            filename = self.get_tsne_file_name()
         important_structs = [self.all_used_course_names,
                              self.used_acad_grps,
                              self.perplexity,
+                             self.draft_mode,
                              self.fitted_vectors]
         pickle.dump(important_structs, open(filename, 'wb'))
     
@@ -1267,6 +1286,7 @@ class TSNECourseVisualizer(object):
         (self.all_used_course_names,
          self.used_acad_grps,
          self.perplexity,
+         self.draft_mode,
          self.fitted_vectors) = pickle.load(open(filename, 'rb'))
         return self.fitted_vectors 
         
@@ -1354,5 +1374,5 @@ if __name__ == '__main__':
     visualizer = TSNECourseVisualizer(vector_creator, 
                                       in_queue=None, 
                                       out_queue=None, 
-                                      fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
+                                      #fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
                                       draftMode=True)
