@@ -6,22 +6,26 @@ Created on Aug 21, 2018
 
 import functools
 import os
+from queue import Empty
 import sys
 
 from PySide2.QtCore import QFile, QTimer
 from PySide2.QtUiTools import QUiLoader
-from PySide2.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox
+from PySide2.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox, QFileDialog, QMainWindow
 
-from queue import Empty
+from PySide2.QtWidgets import qApp 
+from PySide2.QtCore import Qt
 
 from pathways.common_classes import Message
-
 
 class ControlSurface(object):
     '''
     The control surface PySide2 UI is entirely created, and 
     its events serviced here.
     '''
+
+    # Where to put saved displays:
+    DEFAULT_CACHE_FILE_DIR = os.path.join(os.path.dirname(__file__), '../cache')
 
     # Number of courses to list when user clicks
     # on a clump of stacked marks:
@@ -37,7 +41,7 @@ class ControlSurface(object):
     
         self.ui_file = ui_file
         self.out_queue = out_queue    
-        self.in_queue = in_queue            
+        self.in_queue = in_queue
         
         self.chkBox_names_acad_groups = ['EngrChk', 'GsbChk', 'HandSChk', 'MedChk', 
                             'UgChk', 'EarthChk', 'EducChk', 'VpueChk',
@@ -55,6 +59,11 @@ class ControlSurface(object):
             'LawChk': 'LAW', 
             'OthersChk': 'OTHERS'
             }
+
+        # Not currently synchronizing widgets with 
+        # viz state:
+        
+        self.synchronizing = False
 
         self.app = QApplication()
         self.control_surface_widget = ContainerWidget(self.ui_file)
@@ -85,6 +94,12 @@ class ControlSurface(object):
         
         clrBtn = self.control_surface_widget.widget.clrBoardButton
         clrBtn.clicked.connect(self.clear_msg_board)
+        
+        saveBtn = self.control_surface_widget.widget.saveVizButton
+        saveBtn.clicked.connect(self.slot_save_viz_btn)
+
+        restoreBtn = self.control_surface_widget.widget.loadVizButton
+        restoreBtn.clicked.connect(self.slot_restore_viz_btn)
         
         # Remember the checkbox objects for easy reference:
         self.chk_box_obj_dict = {}
@@ -122,6 +137,19 @@ class ControlSurface(object):
         self.write_to_main('recompute', None)
         # print('In control process: Button pushed')
         
+    def slot_save_viz_btn(self):
+        self.write_to_main('save_viz', None)
+        
+    def slot_restore_viz_btn(self):
+        # Get file name from user:
+        filename = QFileDialog.getOpenFileName(
+            caption='Select viz file...',
+            directory=ControlSurface.DEFAULT_CACHE_FILE_DIR,
+            filter='*.pickle'
+            )
+        self.write_to_main('restore_viz', filename)
+        
+        
     def slot_quit_btn(self):
         print('In control process: quit button')
         self.write_to_main('stop', None)
@@ -130,16 +158,43 @@ class ControlSurface(object):
         self.app.exit()
     
     def slot_draft_mode(self, chkBox_name, new_state):
+        
+        # If setting checkbox in response to a sync request
+        # from viz, rather than because user clicked on checkbox,
+        # Ignore:
+        if self.synchronizing:
+            return
+        
         if self.chk_box_obj_dict['draftModeChk'].isChecked(): 
             self.write_to_main('set_draft_mode', True)
         else:
             self.write_to_main('set_draft_mode', False)
         
     def slot_acad_grp_chk(self, chkBox_name, new_state):
+        '''
+        Make a list of academic group names whose checkboxes
+        are checked.
+        
+        @param chkBox_name: name of checkbox that was clicked
+        @type chkBox_name: string
+        @param new_state: New state: checked vs. unchecked
+        @type new_state: Qt checkbox state
+        '''
+
+        # If setting checkbox in response to a sync request
+        # from viz, rather than because user clicked on checkbox,
+        # Ignore:
+        if self.synchronizing:
+            return
+        
         # print('ChkBox %s: %s' % (chkBox_name, new_state))
+        # Go through all the checkboxes and grab the ones that
+        # refer academic groups, and are checked. Then get
+        # their names:
+        
         active_acad_grps = [self.chkBox_name_to_acac_grp[chkBox_name] 
                             for (chkBox_name, chkBox_obj) in self.chk_box_obj_dict.items()  
-                            if chkBox_obj.isChecked()
+                            if chkBox_obj.isChecked() and chkBox_name in self.chkBox_names_acad_groups
                             ]
         
         self.write_to_main('set_acad_grps', active_acad_grps)
@@ -167,18 +222,60 @@ class ControlSurface(object):
             self.out_queue.put(Message(msg_code, state))
         
     def handle_msg_from_main(self, msg):
-        if msg.msg_code == 'update_crse_board':
+        msg_code = msg.msg_code
+        if msg_code == 'update_crse_board':
             self.write_to_msg_board(msg.state)
-        elif msg.msg_code == 'clear_crse_board':
+        elif msg_code == 'clear_crse_board':
             self.clear_msg_board()
-        elif msg.msg_code == 'raise':
+        elif msg_code == 'update_status':
+            self.sync_widgets_to_viz_status(msg.state)
+        elif msg_code == 'raise':
             # Being asked to raise our window to the top
             # (above the viz window):
-            #*****self.app.activeWindow().activateWindow()
+            # main_window_widget = self.control_surface_widget.widget.findChild(QWidget, 'MainWindow')
+            # main_window_widget.activateWindow()
+            # main_window_widget.raise_()
             pass
             
     def clear_msg_board(self):
         self.crse_board.clear()
+
+    def sync_widgets_to_viz_status(self, state_summary):
+        '''
+        Given a control-surface-relevant summary of the visualization,
+        update the surface to reflect that state. Used when a new
+        viz is brought up, maybe from a saved file. Set the control
+        surface to what's actually going on.
+        
+        @param state_summary: summary of visualzation state
+        @type state_summary: dict
+        '''
+        
+        # Prevent changes we make to the control surface in response to
+        # the viz process' sync request from triggering messages back to
+        # the viz. Normally, when user changes a checkbox state with the mouse,
+        # the resulting signal will trigger a msg to the viz:
+         
+        try:
+            self.synchronizing = True
+            self.chk_box_obj_dict['draftModeChk'].setChecked(state_summary['draft_mode'])
+            self.uncheck_all_acad_groups()
+            
+            # Get list of acad groups to set checkmarks for.
+            # List is like ['ENGR', 'MED',...]
+            acad_grps_to_set = state_summary['active_acad_grps']
+            
+            for chk_box_name in self.chkBox_name_to_acac_grp.keys():
+                acad_grp_name = self.chkBox_name_to_acac_grp[chk_box_name]
+                if acad_grp_name in acad_grps_to_set:
+                    self.chk_box_obj_dict[chk_box_name].setChecked(True)
+        finally:
+            self.synchronizing = False
+            
+                                                         
+    def uncheck_all_acad_groups(self):
+        for chkBox_name in self.chkBox_names_acad_groups:
+            self.chk_box_obj_dict[chkBox_name].setChecked(False)
         
         
     def write_to_msg_board(self, text):

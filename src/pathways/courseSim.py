@@ -8,16 +8,12 @@ import os
 from queue import Empty  # The regular queue's empty exception
 from time import sleep
 
-from pathways.common_classes import Message
 from pathways.control_surface_process import ControlSurface
 from pathways.course_tsne_visualization import TSNECourseVisualizer
 from pathways.course_vector_creation import CourseVectorsCreator
+from test.support import multiprocessing
+from pathways.common_classes import Message
 
-
-#import matplotlib
-#from pathways.common_classes import Message
-# Likely not needed put in the debug the crash
-#matplotlib.use("Qt5Agg")
 class TsneCourseExplorer(object):
     '''
     Main thread
@@ -62,19 +58,25 @@ class TsneCourseExplorer(object):
                                      )
                                )
         tsne_process.start()
+
+        # Await ready-signal from viz:
+        msg = self.tsne_viz_from_queue.get(block=True)
+        if msg.msg_code != 'ready':
+            raise ValueError("Was expecting 'ready' message from viz process.")
+        
+        # Raise the control surface, b/c it gets buried by the viz:
+        self.send_to_control(msg_code='raise')
         
         self.keep_going = True
         try:
             while self.keep_going:
                 try:
-                    #*****control_msg = self.control_surface_from_queue.get(block=True, timeout=TsneCourseExplorer.QUEUE_LISTEN_TIME)
                     control_msg = self.control_surface_from_queue.get(block=False)
                     self.handle_msg_from_control(control_msg)
                 except Empty:
                     pass
     
                 try:
-                    #*****tsne_msg = self.tsne_viz_from_queue.get(TsneCourseExplorer.QUEUE_LISTEN_TIME)
                     tsne_msg = self.tsne_viz_from_queue.get(block=False)
                     self.handle_msg_from_tse(tsne_msg)                
                 except Empty:
@@ -104,22 +106,23 @@ class TsneCourseExplorer(object):
             self.tsne_viz_to_queue.put(msg)
     
     def handle_msg_from_tse(self, msg):
-        if msg.msg_code == 'update_crse_board' or\
-            msg.msg_code == 'clear_crse_board':
+        # If it's a 'ready' message, that's from a recomputation
+        # request. Ignore it:
+        if msg.msg_code == 'ready':
+            return
+        # Just forward to the control surface:
+        self.send_to_control(msg)
+        if self.debug:
+            print("In main: Msg from Tsne viz: %s; %s" % (msg.msg_code, msg.state))
+    
+    def send_to_control(self, msg=None, msg_code=None, state=None):
+        if msg is not None:
             self.control_surface_to_queue.put(msg)
-        elif msg.msg_code == 'ready':
-            # Tsne viz window is up and running. Let the
-            # control surface window know so it can raise
-            # itself:
-            self.control_surface_to_queue.put(Message('raise', None))
-
-        #print("In main: Msg from Tsne viz: %s; %s" % (msg.msg_code, msg.state))
-        # Testing only:
-        #time.sleep(0.5)
-        #self.tsne_viz_to_queue.put(Message('receipt for %s' % msg.msg_code + str(msg.state), int(msg.state) +1))
-        
+        else:
+            self.control_surface_to_queue.put(Message(msg_code, state))
     
 if __name__ == '__main__':
+    multiprocessing.set_start_method('spawn')
     TsneCourseExplorer()
 #     #tsne_similarity_explorer = TsneCourseSimExplorer()
     #sys.exit(tsne_similarity_explorer.app.exec_())
