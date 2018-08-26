@@ -9,7 +9,7 @@ from queue import Empty  # The regular queue's empty exception
 from time import sleep
 
 from pathways.control_surface_process import ControlSurface
-from pathways.course_tsne_visualization import TSNECourseVisualizer
+from pathways.course_tsne_visualization import start_viz
 from pathways.course_vector_creation import CourseVectorsCreator
 from test.support import multiprocessing
 from pathways.common_classes import Message
@@ -45,19 +45,17 @@ class TsneCourseExplorer(object):
         self.tsne_viz_from_queue = Queue()
         # Since we'll run the TSNE viz with a separate control interface,
         # we tell the visualizer not to maintain its own course display board: 
-        tsne_standalone = False 
         
-        vector_creator = CourseVectorsCreator() 
-        vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
+        self.vector_creator = CourseVectorsCreator() 
+        self.vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
  
-        tsne_process = Process(target=TSNECourseVisualizer, 
-                               args=(vector_creator,
-                                     tsne_standalone,
-                                     self.tsne_viz_to_queue,
-                                     self.tsne_viz_from_queue
-                                     )
-                               )
-        tsne_process.start()
+        self.tsne_process = Process(target=start_viz, 
+                                    args=(self.vector_creator,
+                                          self.tsne_viz_to_queue,
+                                          self.tsne_viz_from_queue
+                                          )
+                                    )
+        self.tsne_process.start()
 
         # Await ready-signal from viz:
         msg = self.tsne_viz_from_queue.get(block=True)
@@ -91,7 +89,7 @@ class TsneCourseExplorer(object):
         control_surface_process.join()
         
         # Wait for the Tsne viz thread to stop:
-        tsne_process.join()
+        self.tsne_process.join()
 
     def handle_msg_from_control(self, msg):
         print("In main: Msg from control: %s, %s" % (msg.msg_code, msg.state))
@@ -110,6 +108,18 @@ class TsneCourseExplorer(object):
         # request. Ignore it:
         if msg.msg_code == 'ready':
             return
+        # Does the viz want to restart?
+        if msg.msg_code == 'restart':
+            self.tsne_process.terminate()
+            self.tsne_process.join()
+            self.tsne_process = Process(target=start_viz, 
+                                        args=(self.vector_creator,
+                                              self.tsne_viz_to_queue,
+                                              self.tsne_viz_from_queue
+                                              )
+                                        )
+            self.tsne_process.start()
+            
         # Just forward to the control surface:
         self.send_to_control(msg)
         if self.debug:

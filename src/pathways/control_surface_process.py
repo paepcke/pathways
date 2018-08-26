@@ -11,10 +11,10 @@ import sys
 
 from PySide2.QtCore import QFile, QTimer
 from PySide2.QtUiTools import QUiLoader
-from PySide2.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox, QFileDialog, QMainWindow
+from PySide2.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox, QFileDialog
 
-from PySide2.QtWidgets import qApp 
-from PySide2.QtCore import Qt
+#from PySide2.QtWidgets import qApp 
+#from PySide2.QtCore import Qt
 
 from pathways.common_classes import Message
 
@@ -25,11 +25,11 @@ class ControlSurface(object):
     '''
 
     # Where to put saved displays:
-    DEFAULT_CACHE_FILE_DIR = os.path.join(os.path.dirname(__file__), '../cache')
+    DEFAULT_CACHE_FILE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../cache'))
 
     # Number of courses to list when user clicks
     # on a clump of stacked marks:
-    MAX_NUM_COURSES_TO_LIST = 15
+    MAX_NUM_COURSES_TO_LIST = 1000
 
     # Time between checking instructions queue from parent process:
     QUEUE_CHECK_INTERVAL = 200 # milliseconds
@@ -142,11 +142,11 @@ class ControlSurface(object):
         
     def slot_restore_viz_btn(self):
         # Get file name from user:
-        filename = QFileDialog.getOpenFileName(
-            caption='Select viz file...',
-            directory=ControlSurface.DEFAULT_CACHE_FILE_DIR,
-            filter='*.pickle'
-            )
+        filename, _ = QFileDialog.getOpenFileName(
+                            caption='Select viz file...',
+                            directory=ControlSurface.DEFAULT_CACHE_FILE_DIR,
+                            filter='*.pickle'
+                            )
         self.write_to_main('restore_viz', filename)
         
         
@@ -239,6 +239,7 @@ class ControlSurface(object):
             
     def clear_msg_board(self):
         self.crse_board.clear()
+        self.refresh_crse_board()
 
     def sync_widgets_to_viz_status(self, state_summary):
         '''
@@ -295,6 +296,15 @@ class ControlSurface(object):
                 curr_txt += '\n' + text
         
         self.crse_board.setText(curr_txt)
+        self.refresh_crse_board()
+        
+        
+    def refresh_crse_board(self):
+        
+        # Only way to clear the board AND update the display.
+        # Widget redraw via update() doesn't work:
+        self.crse_board.hide()
+        self.crse_board.show()
         
 class ContainerWidget(QWidget):
 

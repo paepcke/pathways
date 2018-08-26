@@ -45,6 +45,10 @@ from pathways.course_vector_creation import CourseVectorsCreator
 #from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
+class RestartRequest(Exception):
+    def __init__(self, restart_instruction):
+        super().__init__(restart_instruction)
+
 class TSNECourseVisualizer(object):
     '''
     classdocs
@@ -55,7 +59,7 @@ class TSNECourseVisualizer(object):
     status = 'running'
     
     # Where to put saved displays:
-    DEFAULT_CACHE_FILE_DIR = os.path.join(os.path.dirname(__file__), '../cache')
+    DEFAULT_CACHE_FILE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../cache'))
     
     # Perplexity used when creating a TSNE model:
     DEFAULT_PERPLEXITY = 60
@@ -463,8 +467,6 @@ class TSNECourseVisualizer(object):
         # handle_msg_from_main() method will have left
         # a flag for us after closing the current plot:
         
-        ####if self.create_new_plot
-        
         if restart_timer:
             # Schedule the next queue check:
             self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
@@ -489,6 +491,8 @@ class TSNECourseVisualizer(object):
         msg_code = msg.msg_code
         if msg_code == 'stop':
             TSNECourseVisualizer.status='stop'
+            restart_timer = False
+            self.close()
         elif msg_code == 'set_draft_mode':
             TSNECourseVisualizer.draft_mode = msg.state
         elif msg_code == 'set_acad_grps':
@@ -497,16 +501,16 @@ class TSNECourseVisualizer(object):
         elif msg_code == 'save_viz':
             self.save()
         elif msg_code == 'restore_viz':
-            self.restore(msg.state)
-        elif msg_code == 'recompute':
-            # Tell the loop in __main__ to create
-            # a brand new instance once we kill the
-            # figure below:
-            TSNECourseVisualizer.status = 'newplot'
+            # Read the pickled state file, initializing the TSNECourseVisualizer
+            # class variables, close the app window, and restart:
             restart_timer = False
-            
+            self.restore(msg.state, restart=True)
+        elif msg_code == 'recompute':
+            # Exit this instance and start a new one with
+            # the current class var values of TSNECourseVisualizer:
+            restart_timer = False
             # Destroy the current Tsne plot, and make a new one:
-            plt.close(plt.gcf())
+            self.restart()
             
         return restart_timer
     
@@ -817,8 +821,13 @@ class TSNECourseVisualizer(object):
         than our upper limit. If not, find courses descriptions, make a new line for
         the display (course name plus descr, plus description). 
         
+        If standalone, updates the local display. If control surface is
+        separate, then just return the new line of course/descr.
+        
         @param course_name: course name to append
         @type course_name: string
+        @return: course name with course description attached.
+        @rtype: str
         '''
 
         try:
@@ -860,11 +869,29 @@ class TSNECourseVisualizer(object):
             if new_text is not None:
                 if self.standalone:
                     self.update_course_list_display(new_text)
+                    return new_text
                 else:
-                    # Notify the main thread, and from there the control surface
-                    # to update the control surface's course list panel:
-                    self.out_queue.put(Message('update_crse_board', new_text))
-                    
+                    # Return the course/text-description line
+                    return new_text
+     
+    def restart(self):
+        TSNECourseVisualizer.status = 'newplot'
+        self.close()
+        raise RestartRequest('newplot')
+     
+    def close(self):
+        '''
+        Close the application window, causing the plt.show() in the
+        __init__() method to unblock and return. The loop in 
+        function start_viz() will thereby unblock. It's up to the
+        caller to set TSNECourseVisualizer.status to the correct
+        follow-on action ('stop', 'newplot') before calling this
+        method.
+        
+        '''
+        plt.close(plt.gcf())
+        
+        
     # ---------------------------------------- UI Dynamics --------------
     
     #--------------------------
@@ -913,7 +940,9 @@ class TSNECourseVisualizer(object):
         # Get existing list in course name list and
         # add the new course to it:
           
-        self.append_to_course_list_display(course_name)
+        crse_name_plus_descr = self.append_to_course_list_display(course_name)
+        if not self.standalone:
+            self.send_to_main(Message('update_crse_board', crse_name_plus_descr))
 
     #--------------------------
     # onclick
@@ -976,18 +1005,25 @@ class TSNECourseVisualizer(object):
         '''
         
         lasso_path = Path(verts)
-        self.lassoed_course_points.extend(self.course_points.contains_course_points(lasso_path))
+        self.lassoed_course_points = self.course_points.contains_course_points(lasso_path)
 
         # Course names are labels of the point objects:
         course_names = [course_point.get_label() for course_point in self.lassoed_course_points]
         
-        # Add course names to the course display:
+        new_text = ''    
         for course_name in course_names:
-            self.append_to_course_list_display(course_name)
+            new_text += '\n' + self.append_to_course_list_display(course_name)
+
+        # Add course names to the course display:
 
         if self.standalone:            
             self.ax_course_list.get_figure().canvas.draw_idle()
             #print('Selected courses: %s.' % course_names)
+        else:
+            # Notify the main thread, and from there the control surface
+            # to update the control surface's course list panel:
+            self.out_queue.put(Message('update_crse_board', new_text))
+            
 
     #--------------------------
     # disconnect 
@@ -1380,7 +1416,7 @@ class TSNECourseVisualizer(object):
     # restore 
     #----------------
         
-    def restore(self, filename):
+    def restore(self, filename, restart=False):
         viz_file = open(filename, 'rb')
         (self.all_used_course_names,
          self.used_acad_grps,   # Groups found from courses we actually used
@@ -1388,7 +1424,10 @@ class TSNECourseVisualizer(object):
          TSNECourseVisualizer.perplexity,
          TSNECourseVisualizer.draft_mode,
          self.fitted_vectors) = pickle.load(viz_file)
-        return self.fitted_vectors 
+        if restart:
+            self.restart()
+        else:
+            return self.fitted_vectors 
         
     #--------------------------
     # quit 
@@ -1402,6 +1441,7 @@ class TSNECourseVisualizer(object):
         curr_fig_num = plt.gcf().number
         plt.close(plt.figure(curr_fig_num))
         TSNECourseVisualizer.status = 'stop'
+        sys.exit('stop')
         
 
         
@@ -1478,38 +1518,44 @@ class CoursePoints(dict):
         scatter_artists = [self[coord_pair] for coord_pair in itertools.compress(coord_pairs, contained_pair_booleans)] 
         return scatter_artists
    
+def start_viz(vector_creator,  #@UnusedVariable
+              in_queue=None, 
+              out_queue=None, 
+              #fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
+              draftMode=True):
     
+    TSNECourseVisualizer.status = 'newplot'
+    
+    while True:
+        if TSNECourseVisualizer.status == 'newplot':
+            TSNECourseVisualizer.status = 'running'
+            # Will hang until someone calls plt.close(<figNum>).
+            # Depending on how they set TSNECourseVisualizer.status we
+            # either make a new figure, or quit: 
+            try:
+                visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
+                                                  in_queue=in_queue, 
+                                                  out_queue=out_queue, 
+                                                  #fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
+                                                  draftMode=draftMode,
+                                                  standalone=False)
+            except RestartRequest as exit_request:
+                #*******
+                print('Visualizer creation returned: %s' % exit_request)
+                #*******
+            continue
+        else:
+            sys.exit(0)
+
+
 # ----------------------------------------------- Main -------------------
 if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
     data_dir = os.path.join(os.path.dirname(__file__), '../data/')
     vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
-    
-    #*******
-    print('Visualizer main section entered.')
-    #*******
-    
-    
-    def loop():
-        TSNECourseVisualizer.status = 'newplot'
-        
-        while True:
-            if TSNECourseVisualizer.status == 'newplot':
-                TSNECourseVisualizer.status = 'running'
-                # Will hang until someone calls plt.close(<figNum>).
-                # Depending on how they set TSNECourseVisualizer.status we
-                # either make a new figure, or quit: 
-                visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
-                                                  in_queue=None, 
-                                                  out_queue=None, 
-                                                  #fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
-                                                  draftMode=True)
-                #*******
-                print('Visualizer creation returned')
-                #*******
-                continue
-            else:
-                sys.exit(0)
-    
-    loop()
-    
+
+    visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
+                                      in_queue=None, 
+                                      out_queue=None, 
+                                      #fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
+                                      draftMode=True)
