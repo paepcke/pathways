@@ -110,6 +110,7 @@ class TSNECourseVisualizer(object):
         'CBIO' : 'MED',
         'CEE' : 'ENGR',
         'CHEM' : 'H&S',
+        'CHEMENG' : 'ENGR',
         'CHIL' : 'H&S',
         'CHIN' : 'H&S',        
         'CHICAN' : 'H&S',
@@ -215,7 +216,7 @@ class TSNECourseVisualizer(object):
         'PAS' : 'MED',
         'PATH' : 'MED',
         'PEDS' : 'MED',
-        'PE'   : 'H&S',
+        'PE'   : 'ATH',  # officially: Health and Human Performance
         'PHIL' : 'H&S',
         'PHOTON' : 'H&S',
         'PHYSICS' : 'H&S',
@@ -224,7 +225,7 @@ class TSNECourseVisualizer(object):
         'PORT' : 'H&S',        
         'PSY' : 'H&S',
         'PUB' : 'H&S',        
-        'PWR' : 'H&S',
+        'PWR' : 'VPUE',
         'RAD' : 'MED',
         'RADO' : 'MED',
         'REES' : 'H&S',        
@@ -504,13 +505,21 @@ class TSNECourseVisualizer(object):
             # Read the pickled state file, initializing the TSNECourseVisualizer
             # class variables, close the app window, and restart:
             restart_timer = False
-            self.restore(msg.state, restart=True)
+            try:
+                self.restore(msg.state, restart=True)
+            except FileNotFoundError:
+                logErr('Restore request failed: %s does not exist.' % msg.state)
+                restart_timer = True
         elif msg_code == 'recompute':
             # Exit this instance and start a new one with
             # the current class var values of TSNECourseVisualizer:
             restart_timer = False
+            # Save the current configuration, and request a restart
+            # with the saved file as the one to use from the cache:
+            saved_filename = self.save()
+            
             # Destroy the current Tsne plot, and make a new one:
-            self.restart()
+            self.restart(saved_filename)
             
         return restart_timer
     
@@ -551,8 +560,7 @@ class TSNECourseVisualizer(object):
         # If a pre-computed model is to be loaded, do that:
         if fittedModelFileName is not None:
             try:
-                self.fitted_vectors = self.restore(fittedModelFileName)
-                self.update_figure_title()
+                self.fitted_vectors = self.restore(fittedModelFileName, restart=False)
             except Exception as e:
                 raise(ValueError("Problem loading pre-computed model from file '%s' (%s)" % \
                                   (fittedModelFileName, repr(e))))
@@ -592,7 +600,8 @@ class TSNECourseVisualizer(object):
                                                      ) 
             
         self.prepare_course_list_panel()
-        scatter_plot = self.add_course_scatter_points(x, y, labels_course_names)
+        #****scatter_plot = self.add_course_scatter_points(x, y, labels_course_names)
+        self.add_course_scatter_points(x, y, labels_course_names)
         
         # Get all the course names we actually used above (could be draft mode):
         self.all_used_course_names = [point.get_label() for point in self.ax_tsne.get_children() if point.get_label() != '']
@@ -609,7 +618,8 @@ class TSNECourseVisualizer(object):
         self.update_figure_title()
         
         logInfo("Adding legend...")
-        self.add_legend(scatter_plot)
+        #*****self.add_legend(scatter_plot)
+        self.add_legend(self.ax_tsne)
         logInfo("Done adding legend.")
 
         # Prepare annotation popups:
@@ -654,6 +664,7 @@ class TSNECourseVisualizer(object):
     def add_course_scatter_points(self, x, y, labels_course_names):
         # List of point coordinates:
         self.xys = []
+        scatter_plot = None
 
         logInfo("Adding course scatter points...")
         for i in range(len(x)):
@@ -685,7 +696,7 @@ class TSNECourseVisualizer(object):
 
             scatter_plot = self.ax_tsne.scatter(x[i],y[i],
                                       c=self.color_map[course_name],
-                                      picker=5,
+                                      picker=1, # Was 5
                                       label=labels_course_names[i])
             # Add this point's coords to our list. The offsets are 
             # a list of this scatterplot's points. But there is only 
@@ -874,10 +885,11 @@ class TSNECourseVisualizer(object):
                     # Return the course/text-description line
                     return new_text
      
-    def restart(self):
+    def restart(self, filename=None):
         TSNECourseVisualizer.status = 'newplot'
         self.close()
-        raise RestartRequest('newplot')
+        #*******raise RestartRequest('newplot')
+        self.send_to_main(Message('restart', filename))
      
     def close(self):
         '''
@@ -889,8 +901,9 @@ class TSNECourseVisualizer(object):
         method.
         
         '''
-        plt.close(plt.gcf())
-        
+        #*****curr_fig_num = plt.gcf().number
+        for fig_num in plt.get_fignums():
+            plt.close(plt.figure(fig_num))
         
     # ---------------------------------------- UI Dynamics --------------
     
@@ -1124,7 +1137,14 @@ class TSNECourseVisualizer(object):
         
         if course_name == '\\N':
             return None
-                
+        
+        # Try the explicitly mapped course--group dict:
+        try:
+            return TSNECourseVisualizer.course_school_dict[course_name]
+        except KeyError:
+            pass
+        
+        # Heuristics:
         if course_name.startswith('AA'):
             return TSNECourseVisualizer.acad_grp_name_root['AA']
         if course_name.startswith('AFRICA'):
@@ -1411,6 +1431,7 @@ class TSNECourseVisualizer(object):
                              TSNECourseVisualizer.draft_mode,
                              self.fitted_vectors]
         pickle.dump(important_structs, open(filename, 'wb'))
+        return filename
     
     #--------------------------
     # restore 
@@ -1425,7 +1446,7 @@ class TSNECourseVisualizer(object):
          TSNECourseVisualizer.draft_mode,
          self.fitted_vectors) = pickle.load(viz_file)
         if restart:
-            self.restart()
+            self.restart(filename)
         else:
             return self.fitted_vectors 
         
@@ -1437,15 +1458,13 @@ class TSNECourseVisualizer(object):
         '''
         Shut down cleanly
         '''
-        
-        curr_fig_num = plt.gcf().number
-        plt.close(plt.figure(curr_fig_num))
+        self.close()
         TSNECourseVisualizer.status = 'stop'
-        sys.exit('stop')
-        
+        raise RestartRequest('stop')        
+        #*****sys.exit('stop')
 
-        
     # ------------------------------------------------------- CoursePoints Class ----------------------
+
 class CoursePoints(dict):
     '''
     A dict mapping nparray coordinate points to scatterplot
@@ -1521,7 +1540,8 @@ class CoursePoints(dict):
 def start_viz(vector_creator,  #@UnusedVariable
               in_queue=None, 
               out_queue=None, 
-              #fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
+              fittedModelFileName=None,
+              standalone=False,
               draftMode=True):
     
     TSNECourseVisualizer.status = 'newplot'
@@ -1536,9 +1556,9 @@ def start_viz(vector_creator,  #@UnusedVariable
                 visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
                                                   in_queue=in_queue, 
                                                   out_queue=out_queue, 
-                                                  #fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
+                                                  fittedModelFileName=fittedModelFileName,
                                                   draftMode=draftMode,
-                                                  standalone=False)
+                                                  standalone=standalone)
             except RestartRequest as exit_request:
                 #*******
                 print('Visualizer creation returned: %s' % exit_request)

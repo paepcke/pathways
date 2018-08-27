@@ -41,22 +41,11 @@ class TsneCourseExplorer(object):
         control_surface_process.name = 'tsne_control_surface'
         control_surface_process.start()
 
-        self.tsne_viz_to_queue = Queue()
-        self.tsne_viz_from_queue = Queue()
-        # Since we'll run the TSNE viz with a separate control interface,
-        # we tell the visualizer not to maintain its own course display board: 
-        
         self.vector_creator = CourseVectorsCreator() 
         self.vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
  
-        self.tsne_process = Process(target=start_viz, 
-                                    args=(self.vector_creator,
-                                          self.tsne_viz_to_queue,
-                                          self.tsne_viz_from_queue
-                                          )
-                                    )
-        self.tsne_process.start()
-
+        self.start_tsne_process()
+        
         # Await ready-signal from viz:
         msg = self.tsne_viz_from_queue.get(block=True)
         if msg.msg_code != 'ready':
@@ -91,12 +80,30 @@ class TsneCourseExplorer(object):
         # Wait for the Tsne viz thread to stop:
         self.tsne_process.join()
 
+    def start_tsne_process(self, viz_cache_filename=None):
+        self.tsne_viz_to_queue = Queue()
+        self.tsne_viz_from_queue = Queue()
+        # Since we'll run the TSNE viz with a separate control interface,
+        # we tell the visualizer not to maintain its own course display board:
+        kwargs = {'standalone' : False,
+                  'in_queue'   : self.tsne_viz_to_queue,
+                  'out_queue'  : self.tsne_viz_from_queue,
+                  'fittedModelFileName' : viz_cache_filename,
+                  'draftMode'  : True
+                  } 
+        self.tsne_process = Process(target=start_viz, 
+                                    args=(self.vector_creator,),
+                                    kwargs=kwargs
+                                    )
+        self.tsne_process.start()
+        
+
     def handle_msg_from_control(self, msg):
         print("In main: Msg from control: %s, %s" % (msg.msg_code, msg.state))
         msg_code = msg.msg_code
         if msg_code == 'stop':
             self.keep_going = False
-            self.tsne_viz_to_queue.put('stop')
+            self.tsne_viz_to_queue.put(Message('stop', None))
         else:
             if self.debug:
                 print('Sending from main to tsne: %s, %s' % (msg.msg_code, msg.state))
@@ -104,26 +111,28 @@ class TsneCourseExplorer(object):
             self.tsne_viz_to_queue.put(msg)
     
     def handle_msg_from_tse(self, msg):
+        
+        if self.debug:
+            print("In main: Msg from Tsne viz: %s; %s" % (msg.msg_code, msg.state))
+        
         # If it's a 'ready' message, that's from a recomputation
         # request. Ignore it:
         if msg.msg_code == 'ready':
             return
+        
         # Does the viz want to restart?
-        if msg.msg_code == 'restart':
+        elif msg.msg_code == 'restart':
             self.tsne_process.terminate()
             self.tsne_process.join()
-            self.tsne_process = Process(target=start_viz, 
-                                        args=(self.vector_creator,
-                                              self.tsne_viz_to_queue,
-                                              self.tsne_viz_from_queue
-                                              )
-                                        )
-            self.tsne_process.start()
+            self.start_tsne_process(msg.state)
             
-        # Just forward to the control surface:
-        self.send_to_control(msg)
-        if self.debug:
-            print("In main: Msg from Tsne viz: %s; %s" % (msg.msg_code, msg.state))
+        elif msg.msg_code == 'stop':
+            self.tsne_process.terminate()
+            self.tsne_process.join()
+        else:    
+            # Just forward to the control surface:
+            self.send_to_control(msg)
+
     
     def send_to_control(self, msg=None, msg_code=None, state=None):
         if msg is not None:
