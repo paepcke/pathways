@@ -6,13 +6,14 @@ Created on Aug 19, 2018
 from multiprocessing import Process, Queue
 import os
 from queue import Empty  # The regular queue's empty exception
+from test.support import multiprocessing
 from time import sleep
 
-from pathways.control_surface_process import ControlSurface
-from pathways.course_tsne_visualization import start_viz
-from pathways.course_vector_creation import CourseVectorsCreator
-from test.support import multiprocessing
 from pathways.common_classes import Message
+from pathways.control_surface_process import ControlSurface
+from pathways.course_tsne_visualization import TSNECourseVisualizer
+from pathways.course_vector_creation import CourseVectorsCreator
+
 
 class TsneCourseExplorer(object):
     '''
@@ -44,7 +45,10 @@ class TsneCourseExplorer(object):
         self.vector_creator = CourseVectorsCreator() 
         self.vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
  
-        self.start_tsne_process()
+        # Start in draft mode for speedy viz appearance:
+        # (standalone <== False is added in the start_tsne_process()
+        # method):
+        self.start_tsne_process({'draft_mode' : True})
         
         # Await ready-signal from viz:
         msg = self.tsne_viz_from_queue.get(block=True)
@@ -80,18 +84,15 @@ class TsneCourseExplorer(object):
         # Wait for the Tsne viz thread to stop:
         self.tsne_process.join()
 
-    def start_tsne_process(self, viz_cache_filename=None):
+    def start_tsne_process(self, kwargs={}):
         self.tsne_viz_to_queue = Queue()
         self.tsne_viz_from_queue = Queue()
         # Since we'll run the TSNE viz with a separate control interface,
         # we tell the visualizer not to maintain its own course display board:
-        kwargs = {'standalone' : False,
-                  'in_queue'   : self.tsne_viz_to_queue,
-                  'out_queue'  : self.tsne_viz_from_queue,
-                  'fittedModelFileName' : viz_cache_filename,
-                  'draftMode'  : True
-                  } 
-        self.tsne_process = Process(target=start_viz, 
+        kwargs['in_queue']   = self.tsne_viz_to_queue
+        kwargs['out_queue']  = self.tsne_viz_from_queue
+        kwargs['standalone'] = False
+        self.tsne_process = Process(target=TSNECourseVisualizer,
                                     args=(self.vector_creator,),
                                     kwargs=kwargs
                                     )
@@ -124,6 +125,8 @@ class TsneCourseExplorer(object):
         elif msg.msg_code == 'restart':
             self.tsne_process.terminate()
             self.tsne_process.join()
+            # state will be a dict of initialization parms 
+            # for the new process:
             self.start_tsne_process(msg.state)
             
         elif msg.msg_code == 'stop':

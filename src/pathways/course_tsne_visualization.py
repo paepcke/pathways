@@ -294,7 +294,8 @@ class TSNECourseVisualizer(object):
                  out_queue=None,
                  perplexity=None,
                  fittedModelFileName=None,
-                 draftMode=None
+                 draft_mode=None,
+                 active_acad_grps=None
                  ):
         '''
         
@@ -314,9 +315,12 @@ class TSNECourseVisualizer(object):
             None, will compute the model. In non-draft mode takes about 20 minutes. From
             precomputed file, no time at all. These files are created from the save()
             method.
-        @param draftMode: whether or not only to approximate the clusters using a subset
+        @param draft_mode: whether or not only to approximate the clusters using a subset
             of vectors, and only for a subset of academic groups.
-        @type: boolean
+        @type draft_mode: boolean
+        @param active_acad_grps: academic groups that should be included in computations:
+            ENGR, VPUE, etc.
+        @type active_acad_grps: [str]
         '''
     
         self.debug = True
@@ -325,11 +329,19 @@ class TSNECourseVisualizer(object):
         self.in_queue   = in_queue
         self.out_queue  = out_queue
         self.standalone = standalone
-        if draftMode is None:
+        if draft_mode is None:
             TSNECourseVisualizer.draft_mode = TSNECourseVisualizer.DEFAULT_DRAFT_MODE
         else:
-            TSNECourseVisualizer.draft_mode = draftMode
-            
+            TSNECourseVisualizer.draft_mode = draft_mode
+        
+        # Init the academic groups that should be included in calculations:
+        self.school_set = frozenset(TSNECourseVisualizer.course_color_dict.keys())
+        if active_acad_grps is None:
+            # Include them all:
+            TSNECourseVisualizer.active_acad_grps = list(self.school_set)
+        else:
+            TSNECourseVisualizer.active_acad_grps = active_acad_grps
+        
         if perplexity is None:
             perplexity = TSNECourseVisualizer.DEFAULT_PERPLEXITY
         TSNECourseVisualizer.perplexity = perplexity 
@@ -363,19 +375,7 @@ class TSNECourseVisualizer(object):
         self.course_name_list = self.create_course_name_list(self.course_vectors_model)                
         # Map each course to the Tableau categorical color of its school (academicGroup):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
-        
-        # Set of all academic groups we know about:
-        self.school_set = frozenset(TSNECourseVisualizer.course_color_dict.keys())
-        
-        # Academic groups that would be included in a
-        # recomputation: if a previous run or a restore() has
-        # initialized TSNECourseVisualizer.active_acad_grps, then
-        # we don't need to initialize any defaults, else we do:
-        try: 
-            TSNECourseVisualizer.active_acad_grps
-        except AttributeError:
-            TSNECourseVisualizer.active_acad_grps = list(self.school_set)
-        
+              
         self.timer = None
         self.init_new_plot(fittedModelFileName=fittedModelFileName)
         
@@ -493,7 +493,10 @@ class TSNECourseVisualizer(object):
         if msg_code == 'stop':
             TSNECourseVisualizer.status='stop'
             restart_timer = False
+            # Clean up:
             self.close()
+            # Ask to be killed:
+            self.send_to_main(Message('stop', None))
         elif msg_code == 'set_draft_mode':
             TSNECourseVisualizer.draft_mode = msg.state
         elif msg_code == 'set_acad_grps':
@@ -514,12 +517,14 @@ class TSNECourseVisualizer(object):
             # Exit this instance and start a new one with
             # the current class var values of TSNECourseVisualizer:
             restart_timer = False
-            # Save the current configuration, and request a restart
-            # with the saved file as the one to use from the cache:
-            saved_filename = self.save()
+            # Construct a dict with the current configuration, and request a restart:
             
             # Destroy the current Tsne plot, and make a new one:
-            self.restart(saved_filename)
+            init_parms = {'draft_mode' : TSNECourseVisualizer.draft_mode,
+                          'active_acad_grps' : TSNECourseVisualizer.active_acad_grps,
+                          'perplexity' : TSNECourseVisualizer.perplexity
+                          }
+            self.restart(init_parms)
             
         return restart_timer
     
@@ -885,11 +890,11 @@ class TSNECourseVisualizer(object):
                     # Return the course/text-description line
                     return new_text
      
-    def restart(self, filename=None):
+    def restart(self, init_parm_dict=None):
         TSNECourseVisualizer.status = 'newplot'
+        # Clean up:
         self.close()
-        #*******raise RestartRequest('newplot')
-        self.send_to_main(Message('restart', filename))
+        self.send_to_main(Message('restart', init_parm_dict))
      
     def close(self):
         '''
@@ -1454,14 +1459,14 @@ class TSNECourseVisualizer(object):
     # quit 
     #----------------
     
-    def quit(self):
-        '''
-        Shut down cleanly
-        '''
-        self.close()
-        TSNECourseVisualizer.status = 'stop'
-        raise RestartRequest('stop')        
-        #*****sys.exit('stop')
+#     def quit(self):
+#         '''
+#         Shut down cleanly
+#         '''
+#         self.close()
+#         TSNECourseVisualizer.status = 'stop'
+#         raise RestartRequest('stop')        
+#         #*****sys.exit('stop')
 
     # ------------------------------------------------------- CoursePoints Class ----------------------
 
@@ -1536,36 +1541,38 @@ class CoursePoints(dict):
         # method returns an iterator with just the non-masked array/list members:
         scatter_artists = [self[coord_pair] for coord_pair in itertools.compress(coord_pairs, contained_pair_booleans)] 
         return scatter_artists
-   
-def start_viz(vector_creator,  #@UnusedVariable
-              in_queue=None, 
-              out_queue=None, 
-              fittedModelFileName=None,
-              standalone=False,
-              draftMode=True):
-    
-    TSNECourseVisualizer.status = 'newplot'
-    
-    while True:
-        if TSNECourseVisualizer.status == 'newplot':
-            TSNECourseVisualizer.status = 'running'
-            # Will hang until someone calls plt.close(<figNum>).
-            # Depending on how they set TSNECourseVisualizer.status we
-            # either make a new figure, or quit: 
-            try:
-                visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
-                                                  in_queue=in_queue, 
-                                                  out_queue=out_queue, 
-                                                  fittedModelFileName=fittedModelFileName,
-                                                  draftMode=draftMode,
-                                                  standalone=standalone)
-            except RestartRequest as exit_request:
-                #*******
-                print('Visualizer creation returned: %s' % exit_request)
-                #*******
-            continue
-        else:
-            sys.exit(0)
+
+#******************************************************* Likely not needed.   
+# def start_viz(vector_creator,  #@UnusedVariable
+#               in_queue=None, 
+#               out_queue=None, 
+#               fittedModelFileName=None,
+#               standalone=False,
+#               draftMode=True):
+#     
+#     TSNECourseVisualizer.status = 'newplot'
+#     
+#     while True:
+#         if TSNECourseVisualizer.status == 'newplot':
+#             TSNECourseVisualizer.status = 'running'
+#             # Will hang until someone calls plt.close(<figNum>).
+#             # Depending on how they set TSNECourseVisualizer.status we
+#             # either make a new figure, or quit: 
+#             try:
+#                 visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
+#                                                   in_queue=in_queue, 
+#                                                   out_queue=out_queue, 
+#                                                   fittedModelFileName=fittedModelFileName,
+#                                                   draftMode=draftMode,
+#                                                   standalone=standalone)
+#             except RestartRequest as exit_request:
+#                 #*******
+#                 print('Visualizer creation returned: %s' % exit_request)
+#                 #*******
+#             continue
+#         else:
+#             sys.exit(0)
+#*******************
 
 
 # ----------------------------------------------- Main -------------------
@@ -1577,5 +1584,4 @@ if __name__ == '__main__':
     visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
                                       in_queue=None, 
                                       out_queue=None, 
-                                      #fittedModelFileName='/tmp/tsneModel_76Courses_ENGR_MED_Perplexity_60_draft.pickle',
-                                      draftMode=True)
+                                      draft_mode=True)
