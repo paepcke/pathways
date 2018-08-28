@@ -526,6 +526,18 @@ class TSNECourseVisualizer(object):
             
         return restart_timer
     
+    #--------------------------
+    # clear_board 
+    #----------------
+    
+    def clear_board(self):
+        if self.standalone:
+            self.course_names_text_artist.remove()
+            self.course_names_text_artist = None
+            self.ax_course_list.get_figure().canvas.draw_idle()
+        else:
+            self.out_queue.put(Message('clear_crse_board'))
+    
     # ------------------------------------------------- Create Plot From Scratch ---------
         
     #--------------------------
@@ -861,8 +873,9 @@ class TSNECourseVisualizer(object):
                     new_text = curr_text + '\n... more buried under.'
                     return 
                 # Have room for more courses in the displayed list:
-                curr_text += '\n'
+                curr_text += '\n' if self.standalone else '<br>'
             else:
+                #*****?curr_text = '' if self.standalone else '<br>'
                 curr_text = ''
                 
             new_text = curr_text + course_name
@@ -977,13 +990,11 @@ class TSNECourseVisualizer(object):
             return
         # Are we standalone, and therefore have a course board?
         # If so, then is there anything on that course board?
-        if self.standalone and self.course_names_text_artist is not None:        
-            self.course_names_text_artist.remove()
-            self.course_names_text_artist = None
-            self.ax_course_list.get_figure().canvas.draw_idle()
+        if self.standalone and self.course_names_text_artist is not None:
+            self.clear_board()        
         else:
             # We have a control board peer window. Tell it to clear the board:
-            self.out_queue.put(Message('clear_crse_board'))
+            self.clear_board()
         self.lassoed_course_points    = []
             
             
@@ -1018,7 +1029,9 @@ class TSNECourseVisualizer(object):
         @param verts: coordinates of points touched by the lasso
         @type verts: [[float,float]]
         '''
-        
+        # Have a clear board for each lasso: 
+        self.clear_board()
+            
         lasso_path = Path(verts)
         self.lassoed_course_points = self.course_points.contains_course_points(lasso_path)
 
@@ -1027,7 +1040,7 @@ class TSNECourseVisualizer(object):
         
         new_text = ''    
         for course_name in course_names:
-            new_text += '\n' + self.append_to_course_list_display(course_name)
+            new_text += '<br>' + self.append_to_course_list_display(course_name)
 
         # Add course names to the course display:
 

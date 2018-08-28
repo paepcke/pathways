@@ -280,8 +280,8 @@ class ControlSurface(object):
             self.chk_box_obj_dict[chkBox_name].setChecked(False)
         
         
-    def write_to_msg_board(self, text):
-        curr_txt = self.crse_board.toPlainText()
+    def write_to_msg_board(self, text, ):
+        curr_txt = self.crse_board.toHtml()
         # Already have max lines plus a line saying "... more buried under."?
         num_lines = curr_txt.count('\n')
         if num_lines >= ControlSurface.MAX_NUM_COURSES_TO_LIST + 1:
@@ -294,9 +294,9 @@ class ControlSurface(object):
             if len(curr_txt) == 0:
                 curr_txt = text
             else:
-                curr_txt += '\n' + text
+                curr_txt += '<br>' + text
         
-        self.crse_board.setText(curr_txt)
+        self.crse_board.setHtml(curr_txt)
         self.refresh_crse_board()
         
         
