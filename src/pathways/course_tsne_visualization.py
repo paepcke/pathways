@@ -361,7 +361,8 @@ class TSNECourseVisualizer(object):
                 reader = csv.reader(fd)
                 try:
                     for (course_name, descr, description) in reader:
-                        TSNECourseVisualizer.course_descr_dict[course_name] = {'descr' : descr, 'description' : description}
+                        bold_descr = '<b>' + descr + '</b>'
+                        TSNECourseVisualizer.course_descr_dict[course_name] = {'descr' : bold_descr, 'description' : description}
                 except ValueError as e:
                     logErr(repr(e))
                     sys.exit()
@@ -520,10 +521,7 @@ class TSNECourseVisualizer(object):
             # Construct a dict with the current configuration, and request a restart:
             
             # Destroy the current Tsne plot, and make a new one:
-            init_parms = {'draft_mode' : TSNECourseVisualizer.draft_mode,
-                          'active_acad_grps' : TSNECourseVisualizer.active_acad_grps,
-                          'perplexity' : TSNECourseVisualizer.perplexity
-                          }
+            init_parms = self.create_viz_init_dict()
             self.restart(init_parms)
             
         return restart_timer
@@ -975,7 +973,6 @@ class TSNECourseVisualizer(object):
         @param event:
         @type event:
         '''
-        
         if not event.dblclick:
             return
         # Are we standalone, and therefore have a course board?
@@ -1040,7 +1037,8 @@ class TSNECourseVisualizer(object):
         else:
             # Notify the main thread, and from there the control surface
             # to update the control surface's course list panel:
-            self.out_queue.put(Message('update_crse_board', new_text))
+            if len(new_text) > 0:
+                self.out_queue.put(Message('update_crse_board', new_text))
             
 
     #--------------------------
@@ -1451,14 +1449,31 @@ class TSNECourseVisualizer(object):
          TSNECourseVisualizer.draft_mode,
          self.fitted_vectors) = pickle.load(viz_file)
         if restart:
-            self.restart(filename)
+            self.restart(self.create_viz_init_dict(filename))
         else:
             return self.fitted_vectors 
         
     #--------------------------
+    # create_viz_init_dict
+    #----------------
+        
+    def create_viz_init_dict(self, fittedModelFileName=None):
+        '''
+        Return a dict that contains the state needed
+        for a restart.
+        '''
+        init_parms = {'draft_mode' : TSNECourseVisualizer.draft_mode,
+                      'active_acad_grps' : TSNECourseVisualizer.active_acad_grps,
+                      'perplexity' : TSNECourseVisualizer.perplexity,
+                      'fittedModelFileName' : fittedModelFileName
+                      }
+        return init_parms
+        
+        
+    #--------------------------
     # quit 
     #----------------
-    
+#**********************    
 #     def quit(self):
 #         '''
 #         Shut down cleanly
@@ -1467,6 +1482,7 @@ class TSNECourseVisualizer(object):
 #         TSNECourseVisualizer.status = 'stop'
 #         raise RestartRequest('stop')        
 #         #*****sys.exit('stop')
+#**********************
 
     # ------------------------------------------------------- CoursePoints Class ----------------------
 

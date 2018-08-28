@@ -144,9 +144,10 @@ class ControlSurface(object):
         # Get file name from user:
         filename, _ = QFileDialog.getOpenFileName(
                             caption='Select viz file...',
-                            directory=ControlSurface.DEFAULT_CACHE_FILE_DIR,
+                            dir=ControlSurface.DEFAULT_CACHE_FILE_DIR,
                             filter='*.pickle'
                             )
+        
         self.write_to_main('restore_viz', filename)
         
         
