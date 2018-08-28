@@ -41,6 +41,7 @@ import numpy as np
 from pathways.color_constants import colors
 from pathways.common_classes import Message
 from pathways.course_vector_creation import CourseVectorsCreator
+from matplotlib.figure import Figure
 
 #from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -610,13 +611,18 @@ class TSNECourseVisualizer(object):
             self.ax_tsne = axes_array[0]
             self.ax_course_list = axes_array[1]
         else:
-            self.figure, self.ax_tsne = plt.subplots(nrows=1, ncols=1,
-                                                     figsize=(15,10)
-                                                     ) 
-            
+            #********
+            self.figure = pickle.load(open('/tmp/fig.pickle', 'rb'))
+            self.ax_tsne = self.figure.get_axes()[0]
+            self.course_points = pickle.load(open('/tmp/course_points.pickle', 'rb'))
+
+#             self.figure, self.ax_tsne = plt.subplots(nrows=1, ncols=1,
+#                                                      figsize=(15,10)
+#                                                     ) 
+            #**********
         self.prepare_course_list_panel()
-        #****scatter_plot = self.add_course_scatter_points(x, y, labels_course_names)
-        self.add_course_scatter_points(x, y, labels_course_names)
+        # TEST:
+        #*********self.add_course_scatter_points(x, y, labels_course_names)
         
         # Get all the course names we actually used above (could be draft mode):
         self.all_used_course_names = [point.get_label() for point in self.ax_tsne.get_children() if point.get_label() != '']
