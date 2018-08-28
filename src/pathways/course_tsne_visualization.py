@@ -841,7 +841,7 @@ class TSNECourseVisualizer(object):
     # append_to_course_list_display 
     #----------------
 
-    def append_to_course_list_display(self, course_name):
+    def append_to_course_list_display(self, course_name, priorText=''):
         '''
         Get already-displayed course descriptions. See whether we already have more
         than our upper limit. If not, find courses descriptions, make a new line for
@@ -852,32 +852,17 @@ class TSNECourseVisualizer(object):
         
         @param course_name: course name to append
         @type course_name: string
-        @return: course name with course description attached.
+        @param priorText: any text to which course info is to be appended
+        @type priorText: str
+        @return: priorText with course name with course description attached.
         @rtype: str
         '''
-
+        new_text = ''
+        curr_text = priorText
+        # Get text from standalone board, or empty str if not
+        # standalone:
+        curr_text += self.get_text_standalone_board()
         try:
-            if self.course_names_text_artist is not None:
-                
-                # Already showing text; internally add new course to that
-                # list if that doesn't exceed max courses to show, and 
-                # erase current text if we will replace the text:
-                
-                curr_text = self.course_names_text_artist.get_text()
-                # Already have max lines plus a line saying "... more buried under."?
-                num_lines = curr_text.count('\n')
-                if num_lines >= TSNECourseVisualizer.MAX_NUM_COURSES_TO_LIST + 1:
-                    new_text = None
-                    return
-                elif num_lines == TSNECourseVisualizer.MAX_NUM_COURSES_TO_LIST:
-                    new_text = curr_text + '\n... more buried under.'
-                    return 
-                # Have room for more courses in the displayed list:
-                curr_text += '\n' if self.standalone else '<br>'
-            else:
-                #*****?curr_text = '' if self.standalone else '<br>'
-                curr_text = ''
-                
             new_text = curr_text + course_name
             # If we have course descriptions loaded, add short and long descriptions:
             if len(TSNECourseVisualizer.course_descr_dict) > 0:
@@ -893,13 +878,32 @@ class TSNECourseVisualizer(object):
                 if description != '\\N':
                     new_text += '; ' + description
         finally:
-            if new_text is not None:
-                if self.standalone:
-                    self.update_course_list_display(new_text)
-                    return new_text
-                else:
-                    # Return the course/text-description line
-                    return new_text
+            if len(new_text) > 0 and self.standalone:
+                # Update local display:
+                self.update_course_list_display(new_text)
+            return new_text
+                
+    def get_text_standalone_board(self):
+        
+        if not self.standalone or self.course_names_text_artist is None:
+            return ''
+                
+        # Already showing text; internally add new course to that
+        # list if that doesn't exceed max courses to show, and 
+        # erase current text if we will replace the text:
+        
+        curr_text = self.course_names_text_artist.get_text()
+        # Already have max lines plus a line saying "... more buried under."?
+        num_lines = curr_text.count('\n')
+        if num_lines >= TSNECourseVisualizer.MAX_NUM_COURSES_TO_LIST + 1:
+            new_text = None
+            return
+        elif num_lines == TSNECourseVisualizer.MAX_NUM_COURSES_TO_LIST:
+            new_text = curr_text + '\n... more buried under.'
+            return 
+        # Have room for more courses in the displayed list:
+        curr_text += '\n'
+        return curr_text
      
     def restart(self, init_parm_dict=None):
         TSNECourseVisualizer.status = 'newplot'
@@ -958,7 +962,9 @@ class TSNECourseVisualizer(object):
     def onpick(self, event):
         '''
         Clicked on a course point. Append that course to the course board
-        display.
+        display. This method is called multiple times when marks are
+        overlapping. Collect the events that belong to one click, and
+        only update board in the end:
         
         @param event: click event
         @type event: 
@@ -1029,6 +1035,15 @@ class TSNECourseVisualizer(object):
         @param verts: coordinates of points touched by the lasso
         @type verts: [[float,float]]
         '''
+        
+        # This method is called both at the end of a lasso, and
+        # when the mouse is released form a simple click on a point.
+        # The diff is the when just a click, there are only two
+        # vertices. Use that to destinguish between lasso and click:
+        
+        if len(verts) <= 2:
+            return
+         
         # Have a clear board for each lasso: 
         self.clear_board()
             
