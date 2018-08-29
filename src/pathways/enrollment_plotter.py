@@ -17,7 +17,7 @@ class EnrollmentPlotter(object):
     classdocs
     '''
 
-    def __init__(self, course_list):
+    def __init__(self, course_list, block=True):
         '''
         Constructor
         '''

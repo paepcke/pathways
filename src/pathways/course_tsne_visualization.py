@@ -41,7 +41,8 @@ import numpy as np
 from pathways.color_constants import colors
 from pathways.common_classes import Message
 from pathways.course_vector_creation import CourseVectorsCreator
-from matplotlib.figure import Figure
+
+from pathways.enrollment_plotter import EnrollmentPlotter
 
 #from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -532,9 +533,10 @@ class TSNECourseVisualizer(object):
     
     def clear_board(self):
         if self.standalone:
-            self.course_names_text_artist.remove()
-            self.course_names_text_artist = None
-            self.ax_course_list.get_figure().canvas.draw_idle()
+            if self.course_names_text_artist is not None:
+                self.course_names_text_artist.remove()
+                self.course_names_text_artist = None
+                self.ax_course_list.get_figure().canvas.draw_idle()
         else:
             self.out_queue.put(Message('clear_crse_board'))
     
@@ -896,10 +898,8 @@ class TSNECourseVisualizer(object):
         # Already have max lines plus a line saying "... more buried under."?
         num_lines = curr_text.count('\n')
         if num_lines >= TSNECourseVisualizer.MAX_NUM_COURSES_TO_LIST + 1:
-            new_text = None
             return
         elif num_lines == TSNECourseVisualizer.MAX_NUM_COURSES_TO_LIST:
-            new_text = curr_text + '\n... more buried under.'
             return 
         # Have room for more courses in the displayed list:
         curr_text += '\n'
@@ -1067,6 +1067,7 @@ class TSNECourseVisualizer(object):
             # to update the control surface's course list panel:
             if len(new_text) > 0:
                 self.out_queue.put(Message('update_crse_board', new_text))
+                EnrollmentPlotter(course_names, block=False)
             
 
     #--------------------------
