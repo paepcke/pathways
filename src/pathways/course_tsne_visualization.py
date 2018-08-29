@@ -520,9 +520,8 @@ class TSNECourseVisualizer(object):
             # the current class var values of TSNECourseVisualizer:
             restart_timer = False
             # Construct a dict with the current configuration, and request a restart:
-            
-            # Destroy the current Tsne plot, and make a new one:
             init_parms = self.create_viz_init_dict()
+            # Destroy the current Tsne plot, and make a new one:
             self.restart(init_parms)
             
         return restart_timer
@@ -581,7 +580,6 @@ class TSNECourseVisualizer(object):
                 raise(ValueError("Problem loading pre-computed model from file '%s' (%s)" % \
                                   (fittedModelFileName, repr(e))))
         else:
-            #****** Pick from TSNECourseVisualizer.active_acad_grps
             # Compute a new fit:
             np_tokens_vectors = np.array(tokens_vectors)
             # In test mode we only fit 500 courses to save time: 
@@ -611,38 +609,34 @@ class TSNECourseVisualizer(object):
             self.ax_tsne = axes_array[0]
             self.ax_course_list = axes_array[1]
         else:
-            #********
-            self.figure = pickle.load(open('/tmp/fig.pickle', 'rb'))
-            self.ax_tsne = self.figure.get_axes()[0]
-            self.course_points = pickle.load(open('/tmp/course_points.pickle', 'rb'))
-
-#             self.figure, self.ax_tsne = plt.subplots(nrows=1, ncols=1,
-#                                                      figsize=(15,10)
-#                                                     ) 
-            #**********
+            # If only need to create a figure if we did not restore() above:
+            if fittedModelFileName is None:
+                self.figure, self.ax_tsne = plt.subplots(nrows=1, ncols=1,
+                                                         figsize=(15,10)
+                                                         ) 
         self.prepare_course_list_panel()
-        # TEST:
-        #*********self.add_course_scatter_points(x, y, labels_course_names)
+        # If only need to create the scatter points if we did not restore() above:
+        if fittedModelFileName is None:
+            scatter_plot = self.add_course_scatter_points(x, y, labels_course_names)
+            # Get all the course names we actually used above (could be draft mode):
+            self.all_used_course_names = [point.get_label() for point in self.ax_tsne.get_children() if point.get_label() != '']
         
-        # Get all the course names we actually used above (could be draft mode):
-        self.all_used_course_names = [point.get_label() for point in self.ax_tsne.get_children() if point.get_label() != '']
+            # Get the set of academic groups represented by these used courses.
+            # That's different from the TSNECourseVisualizer.active_acad_grps list. That one
+            # is the acad groups we are to limit ourselves to irrespective of
+            # courses:
+            self.used_acad_grps = frozenset([self.group_name_from_course_name(course_name) for course_name in self.all_used_course_names\
+                                             if not isinstance(course_name, matplotlib.text.Text)])
         
-        # Get the set of academic groups represented by these used courses.
-        # That's different from the TSNECourseVisualizer.active_acad_grps list. That one
-        # is the acad groups we are to limit ourselves to irrespective of
-        # courses:
-        self.used_acad_grps = frozenset([self.group_name_from_course_name(course_name) for course_name in self.all_used_course_names\
-                                         if not isinstance(course_name, matplotlib.text.Text)])
+            # Update the window title to reflect the number of courses
+            # and academic groups being displayed:
+            self.update_figure_title()
         
-        # Update the window title to reflect the number of courses
-        # and academic groups being displayed:
-        self.update_figure_title()
-        
-        logInfo("Adding legend...")
-        #*****self.add_legend(scatter_plot)
-        self.add_legend(self.ax_tsne)
-        logInfo("Done adding legend.")
-
+            logInfo("Adding legend...")
+            self.add_legend(scatter_plot)
+            self.add_legend(self.ax_tsne)
+            logInfo("Done adding legend.")
+    
         # Prepare annotation popups:
         annot = self.ax_tsne.annotate("",
                                       xy=(0,0),
@@ -1466,6 +1460,8 @@ class TSNECourseVisualizer(object):
                              TSNECourseVisualizer.active_acad_grps,     # Groups we are to use in any new computation.
                              TSNECourseVisualizer.perplexity,
                              TSNECourseVisualizer.draft_mode,
+                             self.figure,
+                             self.course_points,
                              self.fitted_vectors]
         pickle.dump(important_structs, open(filename, 'wb'))
         return filename
@@ -1481,7 +1477,13 @@ class TSNECourseVisualizer(object):
          TSNECourseVisualizer.active_acad_grps, # Groups we are to use in any new computation.
          TSNECourseVisualizer.perplexity,
          TSNECourseVisualizer.draft_mode,
+         self.figure,
+         self.course_points,
          self.fitted_vectors) = pickle.load(viz_file)
+         
+        # Get the scatter plot; it's the only subplot,
+        # therefore the ',0':
+        self.ax_tsne = self.figure.get_axes()[0]
         if restart:
             self.restart(self.create_viz_init_dict(filename))
         else:
