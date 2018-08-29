@@ -9,6 +9,7 @@ import logging
 from logging import info as logInfo
 import os
 import warnings
+from gensim.models.deprecated.keyedvectors import KeyedVectors
 
 with warnings.catch_warnings():
     import gensim
@@ -37,6 +38,21 @@ class CourseVectorsCreator(gensim.models.Word2Vec):
         self.word2vec_model = gensim.models.Word2Vec.load(model_file_name)
         logInfo('Model loaded.') 
         
+    #--------------------------
+    # save_word_vectors_only 
+    #----------------
+    
+    def save_word_vectors_only(self, filename):
+        word_vectors = self.word2vec_model.wv
+        word_vectors.save(filename)
+        
+    #--------------------------
+    # load_word_vectors_only
+    #----------------
+    
+    def load_word_vectors_only(self, filename):
+        self.word_vectors = KeyedVectors.load(filename, mmap='r')
+        return self.word_vectors
         
     #-----------------------------
     # train_word2vec_model 
@@ -132,10 +148,12 @@ class CourseVectorsCreator(gensim.models.Word2Vec):
 # ---------------------------------  Main ---------------------------              
         
 if __name__ == '__main__':
-    student_course_sets_input_file = '/users/Paepcke/Project/Pathways/Data/Course2VecData/course2VecInput.txt'
-    model_save_outfile = '/users/Paepcke/Project/Pathways/Data/Course2VecData/course2vecModelWin10.model'
+    #student_course_sets_input_file = os.path.join(os.path.dirname(__file__), '../Data/Course2VecData/course2VecInput.txt'
+    model_save_outfile = os.path.join(os.path.dirname(__file__), '../Data/course2vecModelWin10.vectors')
     vector_creator = CourseVectorsCreator()
 #     vector_creator.train_word2vec_model(student_course_sets_input_file, 
 #                                         contextWindowSize=10,
 #                                         model_output_file=model_save_outfile)
-    vector_creator.load_word2vec_model('/users/Paepcke/Project/Pathways/Data/Course2VecData/course2vecModelWin10.model')
+    #vector_creator.load_word2vec_model('/users/Paepcke/Project/Pathways/Data/Course2VecData/course2vecModelWin10.model')
+    #vector_creator.save_word_vectors_only(model_save_outfile)
+    vector_creator.load_word_vectors_only(model_save_outfile)
