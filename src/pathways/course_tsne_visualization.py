@@ -644,7 +644,8 @@ class TSNECourseVisualizer(object):
                                       xy=(0,0),
                                       xytext=(20,20),
                                       textcoords="offset points",
-                                      bbox=dict(boxstyle="round", fc="w"),
+                                      color='white',
+                                      bbox=dict(boxstyle="round", fc="#FFFFFF"),
                                       arrowprops=dict(arrowstyle="->")
                             )
         annot.set_visible(False)
@@ -791,9 +792,11 @@ class TSNECourseVisualizer(object):
             return
         label_text    = course_name + '/' + acad_grp_name
         annot.set_text(label_text)
-        dot_color = plot_element.get_facecolor()[0]
-        annot.get_bbox_patch().set_facecolor(dot_color)
-        annot.get_bbox_patch().set_alpha(0.4)
+        #dot_color = plot_element.get_facecolor()[0]
+        #annot.get_bbox_patch().set_facecolor(dot_color)
+        annot.get_bbox_patch().set_facecolor('#00000000') # Black
+        
+        annot.get_bbox_patch().set_alpha(0.7)
 
     #--------------------------
     # prepare_course_list_panel 

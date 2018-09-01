@@ -2,6 +2,9 @@
 Created on Aug 10, 2018
 
 @author: paepcke
+
+NOTE: This file is strongly associated with the TSNE viz. For the more
+       general course2vec see course2vec_model_creation.py
 '''
 
 import gzip
@@ -115,6 +118,7 @@ class CourseVectorsCreator(gensim.models.Word2Vec):
         # Find similar courses:
         course_vector_model.wv.most_similar(positive=course)        
         
+        
     #-----------------------------
     #  read_input
     #-------------------
@@ -122,7 +126,10 @@ class CourseVectorsCreator(gensim.models.Word2Vec):
     def read_input(self, input_file):
         '''
         This method reads the input file which may be in gzip format
-        as determined by presence of absence of .gz extension
+        as determined by presence of absence of .gz extension. Each row
+        in the file is assumed to be all the courses taken by one student.
+        
+              MATH104, CS105A, ...
          '''
      
         logging.info("reading file {0}...this may take a while".format(input_file))
