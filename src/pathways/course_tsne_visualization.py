@@ -30,14 +30,16 @@ from threading import Timer
 import time
 
 import matplotlib
+from matplotlib import markers
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 from matplotlib.widgets import LassoSelector
-
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from multicoretsne import  MulticoreTSNE as TSNE
+
 import numpy as np
+
 from pathways.color_constants import colors
 from pathways.common_classes import Message
 from pathways.course_vector_creation import CourseVectorsCreator
@@ -682,7 +684,11 @@ class TSNECourseVisualizer(object):
     def add_course_scatter_points(self, x, y, labels_course_names):
         # List of point coordinates:
         self.xys = []
-        scatter_plot = None
+        dot_artist = None
+        
+        #****************
+        dot_exists_at = {}
+        #****************
 
         logInfo("Adding course scatter points...")
         for i in range(len(x)):
@@ -702,27 +708,63 @@ class TSNECourseVisualizer(object):
             # skip it:
             if acad_group not in TSNECourseVisualizer.active_acad_grps:
                 continue
-
-#************************
-            # Decide whether just picking 500 in draft mode is fast enough
-            # Else ignore the wanted groups and just do the two below:
-#             # If in test mode: Thin out the chart for test speed:
-#             if TSNECourseVisualizer.draft_mode:
-#                 if not (acad_group == 'MED' or acad_group == 'ENGR'):
-#                     continue
-#************************
-
-            scatter_plot = self.ax_tsne.scatter(x[i],y[i],
+            
+            # Give H&S a different shape to make overlaps 
+            # with other marks visible:
+            dot_artist = self.ax_tsne.scatter(x[i],y[i],
                                       c=self.color_map[course_name],
                                       picker=1, # Was 5
-                                      label=labels_course_names[i])
+                                      label=labels_course_names[i],
+                                      marker=markers.CARETDOWN if acad_group == 'H&S' else 'o'
+                                      )
             # Add this point's coords to our list. The offsets are 
             # a list of this scatterplot's points. But there is only 
             # a single one, since we add one by one:
             
-            self.course_points[scatter_plot.get_offsets()[0]] = scatter_plot
+            self.course_points[dot_artist.get_offsets()[0]] = dot_artist
+            
+            # Check whether a dot already exists in this
+            # spot. If so, make this new artist invisible.
+            
+            # Make a hashable key from the coords:
+            xy_str = str(x[i]) + str(y[i])
+            whats_there = dot_exists_at.get(xy_str, None)
+            
+            # Decide whether to show or hide the artist, depending
+            # on whether we allow overplotting or not: overplotting
+            # OK for mix of H&S and anything else. No others are
+            # overplotted:
+            
+            if whats_there is not None:
+                # At least one dot already exists in this spot:
+                if whats_there == 'H&S+':
+                    # Case1: an H&S marker and another acad group's
+                    #        marker are already there: don't draw
+                    #        anything else:
+                    dot_artist.set_visible(False)
+                elif acad_group == 'H&S' and not whats_there.startswith('H&S'):
+                    # Case2: new group is H&S, and something other than
+                    #        H&S is already plotted.
+                    # We overplot the new H&S onto the existing dot,
+                    # and remember that we now have H&S plus some other
+                    # acad group dot; no other marker will go here 
+                    # from now on:
+                    dot_exists_at[xy_str] = 'H&S+'
+                elif whats_there == 'H&S' and acad_group != 'H&S':
+                    # Case3: one H&S mark is already there, and new acad
+                    #        group is other than H&S. I.e. reverse of
+                    #        above, but separate branch for clarity:  
+                    dot_exists_at[xy_str] = 'H&S+'
+                else:
+                    # Case4: whats already plotted is not H&S, and new
+                    #        acad group is not H&S either: suppress overplot:
+                    dot_artist.set_visible(False)
+            else:
+                # Now there's a mark at the current spot:
+                dot_exists_at[xy_str] = dot_artist
+            
         logInfo("Done adding course scatter points.")
-        return scatter_plot
+        return dot_artist
         
 
     #--------------------------
@@ -924,7 +966,6 @@ class TSNECourseVisualizer(object):
         method.
         
         '''
-        #*****curr_fig_num = plt.gcf().number
         for fig_num in plt.get_fignums():
             plt.close(plt.figure(fig_num))
         
