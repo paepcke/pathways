@@ -78,6 +78,10 @@ class TSNECourseVisualizer(object):
     # on a clump of stacked marks:
     MAX_NUM_COURSES_TO_LIST = 15
     
+    # Width and color of polygon selection lines:
+    POLY_SELECT_WIDTH = 3
+    POLY_SELECT_COLOR = 'gray'
+    
     # File with a bulk of explict mappings from course name to acadGrp:
     course2school_map_file  = os.path.join(os.path.dirname(__file__), '../data/courseNameAcademicOrg.csv')
     course_descr_file       = os.path.join(os.path.dirname(__file__), '../data/crsNmDescriptions.csv')
@@ -394,6 +398,9 @@ class TSNECourseVisualizer(object):
         # No course points lassoed yet:
         self.lassoed_course_points = []
         
+        # No selection polygon vertices yet:
+        self.selection_polygon = None
+        
         runtime = self.plot_tsne_clusters(fittedModelFileName=fittedModelFileName)
         logInfo('Time to build model: %s secs' % runtime)
         
@@ -656,8 +663,6 @@ class TSNECourseVisualizer(object):
         # other quantities are passed:
         curried_hover = functools.partial(self.hover, annot)
         
-        self.lasso = LassoSelector(self.ax_tsne, onselect=self.onselect)
-        
         # Connect the listeners:
         
         # Hovering:
@@ -666,11 +671,12 @@ class TSNECourseVisualizer(object):
         # Clicking on a dot:
         self.figure.canvas.mpl_connect("pick_event", self.onpick)
 
-        # Double clicking anywhere:
-        self.figure.canvas.mpl_connect("button_press_event", self.onclick)
+        # Single or double clicking anywhere (clicking on point will be ignored,
+        # so no conflict with self.onpick():
+        self.figure.canvas.mpl_connect("button_release_event", self.onclick)
                                       
-        # Lassoing points:
-        self.figure.canvas.mpl_connect("key_press_event", self.onenter_key)
+        # Keyboard presses:
+        # self.figure.canvas.mpl_connect("key_press_event", self.onenter_key)
         
         logInfo('Done populating  t_sne plot.')
 
@@ -1036,40 +1042,69 @@ class TSNECourseVisualizer(object):
         @param event:
         @type event:
         '''
-        if not event.dblclick:
-            return
-        # Are we standalone, and therefore have a course board?
-        # If so, then is there anything on that course board?
-        if self.standalone and self.course_names_text_artist is not None:
-            self.clear_board()        
-        else:
-            # We have a control board peer window. Tell it to clear the board:
-            self.clear_board()
-        self.lassoed_course_points    = []
-            
-            
-    #--------------------------
-    # onenter_key 
-    #----------------
-            
-    def onenter_key(self, event):
-        '''
-        Not used
+        currently_poly_lassoing = self.selection_polygon is not None
+        single_click = not event.dblclick and event.button == 1
         
-        @param event:
-        @type event:
-        '''
-        if not event.key == "enter":
+        # Ignore single-clicks when we are not poly-lassoing:
+        if single_click and not currently_poly_lassoing:
+            return 
+          
+        double_click = event.dblclick
+        right_click  = event.button == 3
+        
+        x = event.xdata
+        y = event.ydata
+        
+        if right_click and not currently_poly_lassoing:
+            
+            # Right-button click: start a polygon select:
+            self.selection_polygon = Polygon(self.ax_tsne, x, y)
             return
-        pass
-        #print('Pressed Enter')
-
-
+        
+        if right_click and currently_poly_lassoing:
+            
+            # Close the lasso polygon, and show lassoed classes:
+            self.selection_polygon.close()
+            # Collect the polygon's vertices...
+            verts = self.selection_polygon.vertices()
+            # ... and display all the enclosed courses:
+            self.poly_lasso_was_closed(verts)
+        
+        if double_click and not currently_poly_lassoing:
+            
+            # User wants to erase the course board:
+            
+            # Are we standalone, and therefore have a course board?
+            # If so, then is there anything on that course board?
+            if self.standalone and self.course_names_text_artist is not None:
+                self.clear_board()        
+            else:
+                # We have a control board peer window. Tell it to clear the board:
+                self.clear_board()
+            self.lassoed_course_points    = []
+            return
+            
+        if single_click and currently_poly_lassoing:
+            
+            # If the polygon is already closed, we take the
+            # single click as a request to erase the polygon:
+            
+            if self.selection_polygon.is_closed():
+                # Erase on screen:
+                self.selection_polygon.erase()
+                # Allow GC:
+                self.selection_polygon = None
+                return
+            
+            # Add new point to poly-lasso:
+            self.selection_polygon.add_point(x, y, draw=True)
+            return
+                    
     #--------------------------
     # onselect 
     #----------------
 
-    def onselect(self, verts):
+    def poly_lasso_was_closed(self, verts):
         '''
         Handle lassoing by finding the lassoed courses, and 
         either displaying them on the local course board, or
@@ -1564,7 +1599,102 @@ class TSNECourseVisualizer(object):
 #         raise RestartRequest('stop')        
 #         #*****sys.exit('stop')
 #**********************
+    # ------------------------------------------------------- Polygon Class ----------------------
+    
+class Polygon(object):
+    '''
+    Keep adding points, draw, and erase. Control line width
+    and color per instance.
+    '''    
+    
+    def __init__(self, 
+                 axes,
+                 x_start, 
+                 y_start,
+                 line_width=TSNECourseVisualizer.POLY_SELECT_WIDTH, 
+                 line_color=TSNECourseVisualizer.POLY_SELECT_COLOR):
 
+        self.line_width = line_width
+        self.line_color = line_color
+        self.ax         = axes
+        self.X = [x_start]
+        self.Y = [y_start]
+        self.fig = axes.get_figure()
+        # Remember line segments so we can erase them:
+        self.line_artists = []
+        
+    #--------------------------
+    # add_point 
+    #----------------
+    
+    def add_point(self, x, y, draw=True):
+        self.X.append(x)
+        self.Y.append(y)
+        if draw:
+            line_artist = self.ax.plot(self.X[-2:], self.Y[-2:],
+                                       linewidth=self.line_width,
+                                       color=self.line_color,
+                                       dash_capstyle='round'
+                                       )
+            self.fig.canvas.draw_idle()
+            # The line artist is returned as a singleton
+            # array, so extend instead of append:
+            self.line_artists.extend(line_artist)
+
+    #--------------------------
+    # is_closed 
+    #----------------
+    
+    def is_closed(self):
+        '''
+        Return True if the polygon is a loop. Just a simple test
+        whether the first and last point are identical.
+        '''
+        
+        return len(self.X) > 1 and\
+                   self.X[0] == self.X[-1] and\
+                   self.Y[0] == self.Y[-1]
+        
+    #--------------------------
+    # close 
+    #----------------
+    
+    def close(self, draw=True):
+        '''
+        Add a point that turns the polygon into a closed
+        loop. No fancy analysis around self crossings.
+        Just duplicate the starting point as the end point
+        '''
+        
+        self.add_point(self.X[0], self.Y[0], draw)
+        
+    
+    #--------------------------
+    # vertices 
+    #----------------
+    
+    def vertices(self):
+        '''
+        Return a single array of two-tuples. Each
+        tuple contains the x/y of one vertex. The order
+        of the vertices is in order of how the points were
+        added.
+        
+        '''
+        # In Python 3 zip() returns a zip generator!
+        # So to get a list, need to be explicit about
+        # it:
+        return list(zip(self.X, self.Y))
+        
+    #--------------------------
+    # erase 
+    #----------------
+        
+    def erase(self):
+        for line_artist in self.line_artists:
+            line_artist.remove()
+        self.fig.canvas.draw_idle()
+    
     # ------------------------------------------------------- CoursePoints Class ----------------------
 
 class CoursePoints(dict):
