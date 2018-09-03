@@ -33,7 +33,6 @@ import matplotlib
 from matplotlib import markers
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
-from matplotlib.widgets import LassoSelector
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from multicoretsne import  MulticoreTSNE as TSNE
@@ -413,6 +412,10 @@ class TSNECourseVisualizer(object):
             self.timer = Timer(interval=TSNECourseVisualizer.QUEUE_CHECK_INTERVAL, function=self.check_in_queue)
             self.timer.start()
 
+        # Save the finished scatterblot for fast redraw
+        # via blit when drawing polygons on top:
+        self.background = self.figure.canvas.copy_from_bbox(self.figure.bbox)
+
         self.send_to_main(Message('ready'))        
         self.send_status_to_main()
         
@@ -691,11 +694,9 @@ class TSNECourseVisualizer(object):
         # List of point coordinates:
         self.xys = []
         dot_artist = None
-        
-        #****************
+        # Fast retrieval of artists by coords:
         dot_exists_at = {}
-        #****************
-
+        
         logInfo("Adding course scatter points...")
         for i in range(len(x)):
             try:
@@ -1042,11 +1043,11 @@ class TSNECourseVisualizer(object):
         @param event:
         @type event:
         '''
-        currently_poly_lassoing = self.selection_polygon is not None
+        lassoing = self.currently_lassoing()
         single_click = not event.dblclick and event.button == 1
         
         # Ignore single-clicks when we are not poly-lassoing:
-        if single_click and not currently_poly_lassoing:
+        if single_click and not lassoing:
             return 
           
         double_click = event.dblclick
@@ -1055,13 +1056,13 @@ class TSNECourseVisualizer(object):
         x = event.xdata
         y = event.ydata
         
-        if right_click and not currently_poly_lassoing:
+        if right_click and not lassoing:
             
             # Right-button click: start a polygon select:
-            self.selection_polygon = Polygon(self.ax_tsne, x, y)
+            self.selection_polygon = Polygon(self.ax_tsne, x, y, background_copy=self.background)
             return
         
-        if right_click and currently_poly_lassoing:
+        if right_click and lassoing:
             
             # Close the lasso polygon, and show lassoed classes:
             self.selection_polygon.close()
@@ -1069,8 +1070,9 @@ class TSNECourseVisualizer(object):
             verts = self.selection_polygon.vertices()
             # ... and display all the enclosed courses:
             self.poly_lasso_was_closed(verts)
+            return
         
-        if double_click and not currently_poly_lassoing:
+        if double_click and not lassoing:
             
             # User wants to erase the course board:
             
@@ -1084,24 +1086,45 @@ class TSNECourseVisualizer(object):
             self.lassoed_course_points    = []
             return
             
-        if single_click and currently_poly_lassoing:
+        if single_click and lassoing:
             
             # If the polygon is already closed, we take the
             # single click as a request to erase the polygon:
             
             if self.selection_polygon.is_closed():
-                # Erase on screen:
-                self.selection_polygon.erase()
-                # Allow GC:
-                self.selection_polygon = None
+                self.exit_lassoing_state()
                 return
             
             # Add new point to poly-lasso:
             self.selection_polygon.add_point(x, y, draw=True)
             return
+
+    #--------------------------
+    # on_enroll_history_close
+    #----------------
+
+    def on_enroll_history_close(self, event):
+        '''
+        Called when a popped-up barchart history of previously
+        lassoed courses is closed. In response we stop the lassoing
+        
+        @param event:
+        @type event:
+        '''
+        self.exit_lassoing_state()
+        
+    #--------------------------
+    # exit_lassoing_state 
+    #----------------
+    
+    def exit_lassoing_state(self):
+        # Erase on screen:
+        self.selection_polygon.erase()
+        # Allow GC:
+        self.selection_polygon = None        
                     
     #--------------------------
-    # onselect 
+    # poly_lasso_was_closed
     #----------------
 
     def poly_lasso_was_closed(self, verts):
@@ -1146,8 +1169,17 @@ class TSNECourseVisualizer(object):
             # to update the control surface's course list panel:
             if len(new_text) > 0:
                 self.out_queue.put(Message('update_crse_board', new_text))
-                EnrollmentPlotter(course_names, block=False)
+                EnrollmentPlotter(self, course_names, block=False)
+        
+        self.ax_tsne.get_figure().canvas.draw_idle()
             
+            
+    #--------------------------
+    # currently_lassoing 
+    #----------------
+
+    def currently_lassoing(self):
+        return self.selection_polygon is not None
 
     #--------------------------
     # disconnect 
@@ -1612,14 +1644,25 @@ class Polygon(object):
                  x_start, 
                  y_start,
                  line_width=TSNECourseVisualizer.POLY_SELECT_WIDTH, 
-                 line_color=TSNECourseVisualizer.POLY_SELECT_COLOR):
+                 line_color=TSNECourseVisualizer.POLY_SELECT_COLOR,
+                 background_copy=None):
 
         self.line_width = line_width
         self.line_color = line_color
         self.ax         = axes
         self.X = [x_start]
         self.Y = [y_start]
-        self.fig = axes.get_figure()
+        
+        self.fig     = axes.get_figure()
+        self.canvas  = self.fig.canvas
+        
+        if background_copy is None:
+            # Remember who the plot looks without this polygon on 
+            # top of it. We'll use it for redraw speed:
+            self.background = self.canvas.copy_from_bbox(self.fig.bbox)
+        else:
+            self.background = background_copy
+        
         # Remember line segments so we can erase them:
         self.line_artists = []
         
@@ -1631,15 +1674,22 @@ class Polygon(object):
         self.X.append(x)
         self.Y.append(y)
         if draw:
+            self.canvas.restore_region(self.background)
             line_artist = self.ax.plot(self.X[-2:], self.Y[-2:],
                                        linewidth=self.line_width,
                                        color=self.line_color,
                                        dash_capstyle='round'
                                        )
-            self.fig.canvas.draw_idle()
+            
             # The line artist is returned as a singleton
             # array, so extend instead of append:
-            self.line_artists.extend(line_artist)
+            self.line_artists.extend(line_artist)            
+            
+            # Fast redraw:
+            for artist in self.line_artists: 
+                self.ax.draw_artist(artist)
+            self.canvas.blit(self.fig.bbox)
+        self.canvas.blit(self.fig.bbox)
 
     #--------------------------
     # is_closed 

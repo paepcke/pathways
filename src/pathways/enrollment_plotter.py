@@ -17,16 +17,22 @@ class EnrollmentPlotter(object):
     classdocs
     '''
 
-    def __init__(self, course_list, block=True):
+    def __init__(self, parent, course_list, block=True):
         '''
         Constructor
         '''
+        
         self.db_file = os.path.join(os.path.dirname(__file__), '../data/enrollment_tally.sqlite')
         self.per_quarter_enrollment_sums = self.get_sums(course_list)
         self.strm_computer = StrmComputer()
         self.plot_enrollment_history(self.per_quarter_enrollment_sums, course_list)
         plt.tight_layout()
-
+        
+        # Let parent know if user closes the enrollment
+        # history window:
+        
+        self.fig.canvas.mpl_connect("close_event", parent.on_enroll_history_close)
+        
         plt.show()
         
     def get_sums(self, course_list):
@@ -47,14 +53,14 @@ class EnrollmentPlotter(object):
         enrollments = [strm_enrollment[1] for strm_enrollment in data]
         y_pos = np.arange(len(quarters))
 
-        fig, ax = plt.subplots() #@UnusedVariable
+        self.fig, ax = plt.subplots() #@UnusedVariable
         ax.bar(y_pos, enrollments, align='center', alpha=0.5)
         self.set_xticks(quarters, ax)
         partial_course_str = self.get_partial_course_list(course_list, 3)
         ax.set_ylabel('Enrollment')
         title = 'Quarterly Enrollment %s Since 2000' % partial_course_str
         ax.set_title(title)
-        fig.canvas.set_window_title(title)
+        self.fig.canvas.set_window_title(title)
         
     def set_xticks(self, quarters, ax):
         '''
