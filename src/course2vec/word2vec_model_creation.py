@@ -385,6 +385,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                 except ValueError:
                     # The cross listed course is not in the topn:
                     num_failures += 1
+                    continue
                 num_successes  += 1
                 match_success_probabilities.append(probabilities[first_sib_position])
                 

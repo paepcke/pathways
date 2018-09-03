@@ -394,6 +394,8 @@ class TSNECourseVisualizer(object):
         
         # No course points plotted yet. Has a dictionary interface:
         self.course_points = CoursePoints()
+        # Place to remember the x/y coords of a given course:
+        self.course_xy = {}
         # No course points lassoed yet:
         self.lassoed_course_points = []
         
@@ -723,6 +725,7 @@ class TSNECourseVisualizer(object):
             
             # Give H&S a different shape to make overlaps 
             # with other marks visible:
+            course_name = labels_course_names[i]
             dot_artist = self.ax_tsne.scatter(x[i],y[i],
                                       c=self.color_map[course_name],
                                       picker=1, # Was 5
@@ -734,6 +737,7 @@ class TSNECourseVisualizer(object):
             # a single one, since we add one by one:
             
             self.course_points[dot_artist.get_offsets()[0]] = dot_artist
+            self.course_xy[course_name] = [x[i], y[i]]
             
             # Check whether a dot already exists in this
             # spot. If so, make this new artist invisible.
