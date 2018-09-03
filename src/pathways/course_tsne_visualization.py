@@ -536,7 +536,12 @@ class TSNECourseVisualizer(object):
             init_parms = self.create_viz_init_dict()
             # Destroy the current Tsne plot, and make a new one:
             self.restart(init_parms)
-            
+        elif msg_code == 'add_course_highlight':
+            # Highlight the dot that represents the course.
+            # If msg.state == 'show_enrollment', we show
+            # this course's co-enrollment history: 
+            self.add_course_highlight(msg.state == 'show_enrollment')
+
         return restart_timer
     
     #--------------------------
@@ -1617,6 +1622,13 @@ class TSNECourseVisualizer(object):
                       }
         return init_parms
         
+    
+    #--------------------------
+    # add_course_highlight 
+    #----------------
+    
+    def add_course_highlight(self, show_enrollment_chart=False):
+        pass
         
     #--------------------------
     # quit 
