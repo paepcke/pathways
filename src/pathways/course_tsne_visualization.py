@@ -31,8 +31,9 @@ import time
 
 
 import matplotlib
-matplotlib.use('TkAgg')
-# matplotlib.use('QT5Agg')
+from PyQt5.Qt import QThread
+#matplotlib.use('TkAgg')
+matplotlib.use('QT5Agg')
 
 from matplotlib import markers
 import matplotlib.animation as animation
@@ -396,9 +397,14 @@ class TSNECourseVisualizer(object):
         self.analyst = CourseSimAnalytics(TSNECourseVisualizer.course_vectors_file)
               
         self.timer = None
-        TSNECourseVisualizer.status = 'newplot'
-        while TSNECourseVisualizer.status == 'newplot':
-            self.init_new_plot(fittedModelFileName=fittedModelFileName)
+        self.init_new_plot(fittedModelFileName=fittedModelFileName)
+        #***********
+#        TSNECourseVisualizer.status = 'newplot'
+#         while TSNECourseVisualizer.status == 'newplot':
+#             self.init_new_plot(fittedModelFileName=fittedModelFileName)
+        #*********** 
+        if self.debug:
+            print("Exiting __init__ back to __main__")           
         
     def init_new_plot(self, fittedModelFileName=None):
         
@@ -1007,6 +1013,10 @@ class TSNECourseVisualizer(object):
                 # Update local display:
                 self.update_course_list_display(new_text)
             return new_text
+
+    #--------------------------
+    # get_text_standalone_board 
+    #----------------
                 
     def get_text_standalone_board(self):
         
@@ -1028,11 +1038,21 @@ class TSNECourseVisualizer(object):
         curr_text += '\n'
         return curr_text
      
+    #--------------------------
+    # restart 
+    #----------------
+     
     def restart(self, init_parm_dict=None):
         TSNECourseVisualizer.status = 'newplot'
         # Clean up:
         self.close()
         self.send_to_main(Message('restart', init_parm_dict))
+        time.sleep(0.5)
+        sys.exit(0)
+     
+    #--------------------------
+    # close 
+    #----------------
      
     def close(self):
         '''
@@ -1044,12 +1064,6 @@ class TSNECourseVisualizer(object):
         method.
         
         '''
-        #*************
-        if matplotlib.get_backend() == 'TkAgg':
-            for fig_num in plt.get_fignums():
-                plt.close(plt.figure(fig_num))
-            
-        #*************
         plt.close('all')
         
     # ---------------------------------------- UI Dynamics --------------
@@ -1841,7 +1855,8 @@ class Polygon(object):
     # ------------------------------------------------------- CourseHighlight Class ----------------------
 
 
-class CourseHighlight(object):
+#******class CourseHighlight(object):
+class CourseHighlight(QThread):
     
     POISON_GREEN = '#00ff00'
     MARKER_SIZE  = 250
@@ -1854,6 +1869,9 @@ class CourseHighlight(object):
     dimming   = True # Currently on the way down to less visibility
     
     def __init__(self, ax, x, y, course_name, center_color=None, edgecolors=None, size=None):
+        #********
+        super().__init__()
+        #********
         
         if center_color is None:
             center_color = CourseHighlight.POISON_GREEN
@@ -2061,8 +2079,9 @@ if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
     data_dir = os.path.join(os.path.dirname(__file__), '../data/')
     vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
-
     visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
                                       in_queue=None, 
                                       out_queue=None, 
                                       draft_mode=True)
+    print('Visualizer exited.')
+    
