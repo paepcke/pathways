@@ -17,6 +17,8 @@ from PySide2.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox, QFi
 #from PySide2.QtCore import Qt
 
 from pathways.common_classes import Message
+from PyQt5.Qt import QMessageBox
+from docutils.statemachine import State
 
 class ControlSurface(object):
     '''
@@ -86,6 +88,16 @@ class ControlSurface(object):
         sys.exit(self.app.exec_())
         
     def connect_signals(self):
+        
+        whereIsButton = self.control_surface_widget.widget.whereIsButton
+        whereIsButton.clicked.connect(self.slot_where_is_btn)
+        
+        top10Button = self.control_surface_widget.widget.top10Button
+        top10Button.clicked.connect(self.slot_top10_btn)
+        
+        enrollHistoryButton = self.control_surface_widget.widget.enrollmentButton
+        enrollHistoryButton.clicked.connect(self.slot_enrollment_history_btn)
+        
         recompButton = self.control_surface_widget.widget.recomputeButton
         recompButton.clicked.connect(self.slot_recompute_btn)
         
@@ -132,13 +144,28 @@ class ControlSurface(object):
         # Add the name of the check box to the args of the 
         # callback function:
         chkBoxObj.stateChanged.connect(functools.partial(slot_func, chkBox_name))
+
+    def slot_where_is_btn(self):
+        course_name = self.canonical_course_name()
+        self.write_to_main('where_is', course_name)
                     
+    def slot_top10_btn(self):
+        course_name = self.canonical_course_name()
+        self.write_to_main('top10', course_name)
+
+    def slot_enrollment_history_btn(self):
+        course_name = self.canonical_course_name()
+        self.write_to_main('enrollment_history', course_name)
+    
     def slot_recompute_btn(self):
-        self.write_to_main('recompute', None)
-        # print('In control process: Button pushed')
+        if self.user_confirms('Recomputation can take up to 20 minutes', 'Do it?'):
+            self.write_to_main('recompute', None)
         
     def slot_save_viz_btn(self):
-        self.write_to_main('save_viz', None)
+        if self.user_confirms('If file for this configuration already exists:', 
+                              'Overwrite?',
+                              defaultButton='Cancel'):        
+            self.write_to_main('save_viz', None)
         
     def slot_restore_viz_btn(self):
         # Get file name from user:
@@ -152,11 +179,13 @@ class ControlSurface(object):
         
         
     def slot_quit_btn(self):
-        print('In control process: quit button')
-        self.write_to_main('stop', None)
-        if self.out_queue is not None:
-            self.out_queue.close()
-        self.app.exit()
+        if self.user_confirms('Quitting removes the plot for good', 
+                              '(Alternative: cancel, Save Visualization; then quit.)',
+                              defaultButton='Cancel'):
+            self.write_to_main('stop', None)
+            if self.out_queue is not None:
+                self.out_queue.close()
+            self.app.exit()
     
     def slot_draft_mode(self, chkBox_name, new_state):
         
@@ -199,6 +228,25 @@ class ControlSurface(object):
                             ]
         
         self.write_to_main('set_acad_grps', active_acad_grps)
+
+    def canonical_course_name(self):
+        '''
+        Take the content of the course name input field, and ensure
+        that it is at least in form a course name that the vector model
+        understands: block caps, and no spaces. 
+        
+        @return: content of course name control surface input field
+            block capitalized, and spaces removed.
+        @rtype: str
+        '''
+        course_name_input = self.control_surface_widget.widget.CourseInput
+        course_name = course_name_input.text()
+        if len(course_name) == 0:
+            self.user_info('Enter a course name such as MATH51 in the course name box first.')
+            return
+        # Canonicalize course name:
+        course_name = course_name.upper().replace(' ','')
+        return course_name
         
     def check_in_queue(self):
         if self.in_queue is None:
@@ -230,6 +278,8 @@ class ControlSurface(object):
             self.clear_msg_board()
         elif msg_code == 'update_status':
             self.sync_widgets_to_viz_status(msg.state)
+        elif msg_code == 'error':
+            self.error_msg(msg.state)
         elif msg_code == 'raise':
             # Being asked to raise our window to the top
             # (above the viz window):
@@ -241,7 +291,7 @@ class ControlSurface(object):
     def clear_msg_board(self):
         self.crse_board.clear()
         self.refresh_crse_board()
-
+        
     def sync_widgets_to_viz_status(self, state_summary):
         '''
         Given a control-surface-relevant summary of the visualization,
@@ -299,13 +349,61 @@ class ControlSurface(object):
         self.crse_board.setHtml(curr_txt)
         self.refresh_crse_board()
         
-        
     def refresh_crse_board(self):
         
         # Only way to clear the board AND update the display.
         # Widget redraw via update() doesn't work:
         self.crse_board.hide()
         self.crse_board.show()
+        
+        
+    def error_msg(self, err_msg):
+        self.user_info('<font color="red">' + err_msg + '</font>')
+        
+    def user_info(self, text):
+        '''
+        Raise dialog with explanation, and an OK button. Returns
+        after user clicked OK button
+        
+        @param text: explanatory text
+        @type text: str
+        '''
+        msg_box = QMessageBox()
+        msg_box.setText(text)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.setDefaultButton(QMessageBox.Ok)
+        msg_box.exec_()
+        
+    def user_confirms(self, statement, question=None, defaultButton='Ok'):
+        '''
+        Get user confirmation before an action. Options will
+        be Cancel and OK, with OK being the default button.
+        Msg box will be the statement in large, and the question
+        in smaller. As in:
+        
+                 Recomputation may take up to 20 minutes
+                      Go ahead?
+        
+        @param statement: text shown in large: the fact
+        @type statement: str
+        @param question: optional question/subtext/explanation
+        @type question: str
+        @param defaultButton: which button is to be the default
+        @param defaultButton: {'Cancel' | 'Ok'}
+        @return: user feedback: True for Yes, False for No
+        @rtype: bool
+        '''
+        msg_box = QMessageBox()
+        msg_box.setText(statement)
+        if question is not None:
+            msg_box.setInformativeText(question)
+        msg_box.setStandardButtons(QMessageBox.Cancel | QMessageBox.Ok)
+        if defaultButton == 'Ok':
+            msg_box.setDefaultButton(QMessageBox.Ok)
+        else:
+            msg_box.setDefaultButton(QMessageBox.Cancel)
+        return msg_box.exec_() == QMessageBox.Ok
+        
         
 class ContainerWidget(QWidget):
 

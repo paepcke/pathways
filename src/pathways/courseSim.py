@@ -55,7 +55,8 @@ class TsneCourseExplorer(object):
         if msg.msg_code != 'ready':
             raise ValueError("Was expecting 'ready' message from viz process.")
         
-        # Raise the control surface, b/c it gets buried by the viz:
+        # Raise the control surface, b/c it gets buried by the viz
+        # (Doesn't work):
         self.send_to_control(msg_code='raise')
         
         self.keep_going = True

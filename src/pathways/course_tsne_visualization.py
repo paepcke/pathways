@@ -29,21 +29,28 @@ import sys
 from threading import Timer
 import time
 
+
 import matplotlib
+matplotlib.use('TkAgg')
+# matplotlib.use('QT5Agg')
+
 from matplotlib import markers
+import matplotlib.animation as animation
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
+
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
-from multicoretsne import  MulticoreTSNE as TSNE
 
+from multicoretsne import  MulticoreTSNE as TSNE
 import numpy as np
 
 from pathways.color_constants import colors
 from pathways.common_classes import Message
+from pathways.course_sim_analytics import CourseSimAnalytics
 from pathways.course_vector_creation import CourseVectorsCreator
-
 from pathways.enrollment_plotter import EnrollmentPlotter
+
 
 #from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -84,6 +91,7 @@ class TSNECourseVisualizer(object):
     # File with a bulk of explict mappings from course name to acadGrp:
     course2school_map_file  = os.path.join(os.path.dirname(__file__), '../data/courseNameAcademicOrg.csv')
     course_descr_file       = os.path.join(os.path.dirname(__file__), '../data/crsNmDescriptions.csv')
+    course_vectors_file     = os.path.join(os.path.dirname(__file__), '../data/all_since2000_vec150_win10_.vectors')
     
     # Dict mapping course names to short and long descriptions:
     course_descr_dict = {}
@@ -383,9 +391,14 @@ class TSNECourseVisualizer(object):
         self.course_name_list = self.create_course_name_list(self.course_vectors_model)                
         # Map each course to the Tableau categorical color of its school (academicGroup):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
+        
+        # Get an analytics object from course_sim_analytics.py. Used for top10:
+        self.analyst = CourseSimAnalytics(TSNECourseVisualizer.course_vectors_file)
               
         self.timer = None
-        self.init_new_plot(fittedModelFileName=fittedModelFileName)
+        TSNECourseVisualizer.status = 'newplot'
+        while TSNECourseVisualizer.status == 'newplot':
+            self.init_new_plot(fittedModelFileName=fittedModelFileName)
         
     def init_new_plot(self, fittedModelFileName=None):
         
@@ -396,6 +409,8 @@ class TSNECourseVisualizer(object):
         self.course_points = CoursePoints()
         # Place to remember the x/y coords of a given course:
         self.course_xy = {}
+        # No course highlight dots yet:
+        self.course_highlights = {}
         # No course points lassoed yet:
         self.lassoed_course_points = []
         
@@ -442,6 +457,7 @@ class TSNECourseVisualizer(object):
         if self.out_queue is None:
             return
         self.out_queue.put(msg)
+
 
     #--------------------------
     # send_status_to_main 
@@ -538,12 +554,39 @@ class TSNECourseVisualizer(object):
             init_parms = self.create_viz_init_dict()
             # Destroy the current Tsne plot, and make a new one:
             self.restart(init_parms)
-        elif msg_code == 'add_course_highlight':
+        elif msg_code == 'where_is':
             # Highlight the dot that represents the course.
             # If msg.state == 'show_enrollment', we show
-            # this course's co-enrollment history: 
-            self.add_course_highlight(msg.state == 'show_enrollment')
+            # this course's co-enrollment history:
+            try:
+                course_name = msg.state 
+                self.add_course_highlight(course_name, show_enrollment_chart=True)
+            except Exception as e:
+                logErr("Error in where_is; course_name: %s (%s)" % (course_name, repr(e)))
+        elif msg_code == 'top10':
+            # Expect a course name in Msg.state, and send the top-10 
+            # closest other courses back to control via main:
+            course_name = msg.state
+            if len(course_name) > 0:
+                # Get list of two-tuples: [(crsName, probability), (crseName, prob...)...]:
+                try:
+                    siblings = self.analyst.similar_by_word(course_name, topn=10)
+                except KeyError:
+                    self.control_board_error('Course %s is not in the model; maybe used draft mode when building it?' % course_name)
+                else:
+                    if type(siblings) == list and len(siblings) > 0:
+                        # Turn [('crs1', 0.9456324), (crs2, 00145453), ...)] into the display
+                        # string  "('crs1', 0.9456324)<br>(crs2, 00145453), ...)". We go in 
+                        # two steps:
+                        text_array = ['' + str(crse_prob_tuple) for crse_prob_tuple in siblings]
+                        text = '<br>'.join(text_array)
+                        self.update_course_list_display(text)
 
+        elif msg_code == 'enrollment_history':
+            course_name = msg.state
+            EnrollmentPlotter(self, [course_name], block=False)
+            #******EnrollmentPlotter(self, [course_name], block=True)
+            
         return restart_timer
     
     #--------------------------
@@ -870,35 +913,54 @@ class TSNECourseVisualizer(object):
         self.ax_course_list.axis('off')
 
     #--------------------------
+    # control_board_error 
+    #----------------
+
+    def control_board_error(self, err_msg):
+        '''
+        Ask control board to show an error message in a 
+        popup dialog. TODO: do something similar for standalone
+        
+        @param err_msg: msg to display
+        @type err_msg: str
+        '''
+        if self.standalone:
+            logErr(err_msg)
+            return
+        self.send_to_main(Message('error', err_msg))
+        
+    #--------------------------
     # update_course_list_display 
     #----------------
 
-
     def update_course_list_display(self, new_text):
         '''
-        Update the course list text box. Only relevant if running
-        standalone. When not running standalone, the text is delivered
-        to the control process:
+        Update the course list text box. When running standalone, 
+        the text is delivered to the matplotlib subplot, else
+        text will go to board in control surface. 
         
         @param new_text: text to display
         @type new_text: string
         '''
-        if not self.standalone:
+        if self.standalone:
+            if self.course_names_text_artist is not None:
+                self.course_names_text_artist.remove()
+                self.course_names_text_artist = None
+            
+            # Remove any duplicates:
+            new_text = "\n".join(list(OrderedDict.fromkeys(new_text.split("\n"))))
+            self.course_names_text_artist = self.ax_course_list.text(-0.2, 0.95, 
+                new_text, 
+                transform=self.ax_course_list.transAxes, 
+                fontsize=10, 
+                va='top', 
+                wrap=True)
+            self.ax_course_list.get_figure().canvas.draw_idle()
             return
-        
-        if self.course_names_text_artist is not None:
-            self.course_names_text_artist.remove()
-            self.course_names_text_artist = None
-        
-        # Remove any duplicates:
-        new_text = "\n".join(list(OrderedDict.fromkeys(new_text.split("\n"))))
-        self.course_names_text_artist = self.ax_course_list.text(-0.2, 0.95, 
-            new_text, 
-            transform=self.ax_course_list.transAxes, 
-            fontsize=10, 
-            va='top', 
-            wrap=True)
-        self.ax_course_list.get_figure().canvas.draw_idle()
+        else:
+            # Send text to control board via main:
+            self.send_to_main(Message('update_crse_board', new_text))
+            
 
     #--------------------------
     # append_to_course_list_display 
@@ -982,8 +1044,13 @@ class TSNECourseVisualizer(object):
         method.
         
         '''
-        for fig_num in plt.get_fignums():
-            plt.close(plt.figure(fig_num))
+        #*************
+        if matplotlib.get_backend() == 'TkAgg':
+            for fig_num in plt.get_fignums():
+                plt.close(plt.figure(fig_num))
+            
+        #*************
+        plt.close('all')
         
     # ---------------------------------------- UI Dynamics --------------
     
@@ -1631,9 +1698,20 @@ class TSNECourseVisualizer(object):
     # add_course_highlight 
     #----------------
     
-    def add_course_highlight(self, show_enrollment_chart=False):
-        pass
+    def add_course_highlight(self, course_name, show_enrollment_chart=False):
+        try:
+            x,y = self.course_xy[course_name]
+        except KeyError:
+            self.control_board_error('Course %s not in model (maybe used draft mode?).' % course_name)
+            return
         
+        # If don't have a highlight for the course, make one:
+        if self.course_highlights.get(course_name, None) is None:
+            self.course_highlights[course_name] = CourseHighlight(self.ax_tsne, x,y,course_name)
+        
+        self.figure.canvas.draw_idle()
+        
+
     #--------------------------
     # quit 
     #----------------
@@ -1705,7 +1783,6 @@ class Polygon(object):
             for artist in self.line_artists: 
                 self.ax.draw_artist(artist)
             self.canvas.blit(self.fig.bbox)
-        self.canvas.blit(self.fig.bbox)
 
     #--------------------------
     # is_closed 
@@ -1761,6 +1838,117 @@ class Polygon(object):
             line_artist.remove()
         self.fig.canvas.draw_idle()
     
+    # ------------------------------------------------------- CourseHighlight Class ----------------------
+
+
+class CourseHighlight(object):
+    
+    POISON_GREEN = '#00ff00'
+    MARKER_SIZE  = 250
+    DIM_STEPS    = 0.4
+    MIN_ALPHA    = 0.2
+    
+    highlight_artists = []
+    animation = None
+    ax        = None
+    dimming   = True # Currently on the way down to less visibility
+    
+    def __init__(self, ax, x, y, course_name, center_color=None, edgecolors=None, size=None):
+        
+        if center_color is None:
+            center_color = CourseHighlight.POISON_GREEN
+        if edgecolors is None:
+            edgecolors = CourseHighlight.POISON_GREEN
+        if size is None:
+            size = CourseHighlight.MARKER_SIZE
+            
+        self.x = x
+        self.y = y
+        # First artist?
+        if CourseHighlight.ax is None:
+            CourseHighlight.ax = ax
+        self.highlight_artist = ax.scatter(x,y,
+                                           c=center_color,
+                                           edgecolors=edgecolors,
+                                           s=size,
+                                           label=course_name,
+                                           marker='*'
+                                           )
+        self.highlight_artist.set_alpha(1.0)
+        CourseHighlight.update_animation(self.highlight_artist)
+        
+    @classmethod
+    def update_animation(cls, highlight_artist, run=True):
+        
+        if not run:
+            # Shut down the animation:
+            cls.animation.stop()
+            for artist in cls.highlight_artists:
+                artist.set_alpha(1.0)
+                return
+        
+        # Add the new highlight point to the set of 
+        # animated artists:
+        
+        if not highlight_artist in cls.highlight_artists:
+            cls.highlight_artists.append(highlight_artist)
+            
+        # Animation exists?
+        if CourseHighlight.animation is None:
+            # Nope...
+            CourseHighlight.animation =\
+                    animation.FuncAnimation(CourseHighlight.ax.get_figure(), 
+                                            CourseHighlight.update_fade_in_out,
+                                            #*****blit=True,
+                                            blit=False,
+                                            interval=50)  # msecs between calls to update()
+            
+    @classmethod
+    def update_fade_in_out(cls, frame_number): 
+        '''
+        Called for each animation iteration.
+        
+        @param frame_number: iteration number of calls to this method, or next
+            frame item, if FuncAnimation() was called with parameter 'frames='
+            being an iterable.
+        @type frame_number: any
+        '''
+        curr_alpha = cls.get_alpha()
+        if cls.dimming:
+            if curr_alpha >= cls.MIN_ALPHA:
+                # Dim further
+                cls.set_alpha(curr_alpha * cls.DIM_STEPS)
+            else: 
+                # Reached near-transparency: start growing visibility again:
+                cls.dimming = False
+        else:
+            # Currently growing in visibility:
+            next_alpha = curr_alpha * (1.0 + cls.DIM_STEPS)
+            if next_alpha <= 1.0:
+                cls.set_alpha(next_alpha)
+            else:
+                # Reached max visibility, start dimming again:
+                cls.set_alpha(1.0)
+                cls.dimming = True
+        
+        return cls.highlight_artists
+    
+    @classmethod
+    def set_alpha(cls, alpha):
+        if cls.highlight_artists is None:
+            return
+        
+        for artist in cls.highlight_artists:
+            artist.set_alpha(alpha)
+            
+    @classmethod
+    def get_alpha(cls):
+        # All artists are kept at the same alpha,
+        # so just return the first:
+        if cls.highlight_artists is not None:
+            return cls.highlight_artists[0].get_alpha()
+        return None
+                                                         
     # ------------------------------------------------------- CoursePoints Class ----------------------
 
 class CoursePoints(dict):
