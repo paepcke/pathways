@@ -29,28 +29,30 @@ import sys
 from threading import Timer
 import time
 
-
-import matplotlib
-from PyQt5.Qt import QThread
-#matplotlib.use('TkAgg')
-matplotlib.use('QT5Agg')
-
+from PyQt5.Qt import QThread, QTimer
+from PySide2.QtCore import SIGNAL
 from matplotlib import markers
-import matplotlib.animation as animation
+import matplotlib
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
-
 from multicoretsne import  MulticoreTSNE as TSNE
 import numpy as np
-
 from pathways.color_constants import colors
 from pathways.common_classes import Message
 from pathways.course_sim_analytics import CourseSimAnalytics
 from pathways.course_vector_creation import CourseVectorsCreator
 from pathways.enrollment_plotter import EnrollmentPlotter
+
+
+#matplotlib.use('TkAgg')
+matplotlib.use('QT5Agg')
+
+
+
+
 
 
 #from multiprocessing import Queue
@@ -1064,7 +1066,12 @@ class TSNECourseVisualizer(object):
         method.
         
         '''
-        plt.close('all')
+        
+        
+        # Doesn't close the windows:
+        # plt.close('all')
+        for fignum in plt.get_fignums():
+            plt.figure(fignum).close()
         
     # ---------------------------------------- UI Dynamics --------------
     
@@ -1721,7 +1728,7 @@ class TSNECourseVisualizer(object):
         
         # If don't have a highlight for the course, make one:
         if self.course_highlights.get(course_name, None) is None:
-            self.course_highlights[course_name] = CourseHighlight(self.ax_tsne, x,y,course_name)
+            self.course_highlights[course_name] = CourseHighlight.create_course_highlight(self.ax_tsne, x,y,course_name)
         
         self.figure.canvas.draw_idle()
         
@@ -1858,20 +1865,73 @@ class Polygon(object):
 #******class CourseHighlight(object):
 class CourseHighlight(QThread):
     
+    SINGLETON_INSTANCE = None
+    
     POISON_GREEN = '#00ff00'
     MARKER_SIZE  = 250
     DIM_STEPS    = 0.4
     MIN_ALPHA    = 0.2
+    # Milliseconds between updating fading:
+    FADE_ANIMATION_INTERVAL = 50
     
-    highlight_artists = []
-    animation = None
-    ax        = None
-    dimming   = True # Currently on the way down to less visibility
+    #--------------------------
+    # create_course_highlight 
+    #----------------
+    
+    @classmethod
+    def create_course_highlight(cls, ax, x, y, course_name, center_color=None, edgecolors=None, size=None):
+        
+        highlight_instance_on_entry = CourseHighlight.SINGLETON_INSTANCE
+        
+        if highlight_instance_on_entry is None:
+            # Need to create the singleton instance; init method
+            # will assign the instance to the SINGLETON_INSTANCE class var:
+            CourseHighlight(ax, x, y, course_name, center_color=None, edgecolors=None, size=None)
+            
+        CourseHighlight.SINGLETON_INSTANCE.add_highlight_artist(ax, 
+                                                                x, y, 
+                                                                course_name, 
+                                                                center_color=center_color, 
+                                                                edgecolors=edgecolors, 
+                                                                size=size)
+        return CourseHighlight.SINGLETON_INSTANCE
+    
+    #--------------------------
+    # __init__: singleton contructor 
+    #----------------
     
     def __init__(self, ax, x, y, course_name, center_color=None, edgecolors=None, size=None):
-        #********
         super().__init__()
-        #********
+
+        CourseHighlight.SINGLETON_INSTANCE = self
+
+        self.ax = ax
+        self.x = x
+        self.y = y
+        self.course_name = course_name
+        self.center_color = center_color
+        self.edgecolors = edgecolors
+        self.size = size
+        self.highlight_artists = []
+                
+        self.dimming   = True # Currently on the way down to less visibility
+        self.start()
+
+    #--------------------------
+    # run 
+    #----------------
+
+    def run(self):
+        self.animation = QTimer()
+        self.animation.timeout.connect(self.update_fade_in_out)        
+        self.animation.start(CourseHighlight.FADE_ANIMATION_INTERVAL)
+        self.exec_()
+  
+    #--------------------------
+    # add_highlight_artist
+    #----------------
+
+    def add_highlight_artist(self, ax, x, y, course_name, center_color=None, edgecolors=None, size=None):
         
         if center_color is None:
             center_color = CourseHighlight.POISON_GREEN
@@ -1883,8 +1943,8 @@ class CourseHighlight(QThread):
         self.x = x
         self.y = y
         # First artist?
-        if CourseHighlight.ax is None:
-            CourseHighlight.ax = ax
+        if self.ax is None:
+            self.ax = ax
         self.highlight_artist = ax.scatter(x,y,
                                            c=center_color,
                                            edgecolors=edgecolors,
@@ -1893,36 +1953,32 @@ class CourseHighlight(QThread):
                                            marker='*'
                                            )
         self.highlight_artist.set_alpha(1.0)
-        CourseHighlight.update_animation(self.highlight_artist)
+        self.update_animation(self.highlight_artist)
         
-    @classmethod
-    def update_animation(cls, highlight_artist, run=True):
+    #--------------------------
+    # update_animation 
+    #----------------
+
+    def update_animation(self, highlight_artist, run=True):
         
         if not run:
             # Shut down the animation:
-            cls.animation.stop()
-            for artist in cls.highlight_artists:
+            self.animation.stop()
+            for artist in self.highlight_artists:
                 artist.set_alpha(1.0)
                 return
         
         # Add the new highlight point to the set of 
         # animated artists:
         
-        if not highlight_artist in cls.highlight_artists:
-            cls.highlight_artists.append(highlight_artist)
+        if not highlight_artist in self.highlight_artists:
+            self.highlight_artists.append(highlight_artist)
             
-        # Animation exists?
-        if CourseHighlight.animation is None:
-            # Nope...
-            CourseHighlight.animation =\
-                    animation.FuncAnimation(CourseHighlight.ax.get_figure(), 
-                                            CourseHighlight.update_fade_in_out,
-                                            #*****blit=True,
-                                            blit=False,
-                                            interval=50)  # msecs between calls to update()
-            
-    @classmethod
-    def update_fade_in_out(cls, frame_number): 
+    #--------------------------
+    # update_fade_in_out 
+    #----------------
+
+    def update_fade_in_out(self): 
         '''
         Called for each animation iteration.
         
@@ -1931,40 +1987,52 @@ class CourseHighlight(QThread):
             being an iterable.
         @type frame_number: any
         '''
-        curr_alpha = cls.get_alpha()
-        if cls.dimming:
-            if curr_alpha >= cls.MIN_ALPHA:
-                # Dim further
-                cls.set_alpha(curr_alpha * cls.DIM_STEPS)
-            else: 
-                # Reached near-transparency: start growing visibility again:
-                cls.dimming = False
-        else:
-            # Currently growing in visibility:
-            next_alpha = curr_alpha * (1.0 + cls.DIM_STEPS)
-            if next_alpha <= 1.0:
-                cls.set_alpha(next_alpha)
-            else:
-                # Reached max visibility, start dimming again:
-                cls.set_alpha(1.0)
-                cls.dimming = True
         
-        return cls.highlight_artists
-    
-    @classmethod
-    def set_alpha(cls, alpha):
-        if cls.highlight_artists is None:
+        # If no highlight artists yet, do nothing.
+        # Only happens on first (manual) call:
+        if len(self.highlight_artists) == 0:
             return
         
-        for artist in cls.highlight_artists:
+        curr_alpha = self.get_alpha()
+        if self.dimming:
+            if curr_alpha >= self.MIN_ALPHA:
+                # Dim further
+                self.set_alpha(curr_alpha * CourseHighlight.DIM_STEPS)
+            else: 
+                # Reached near-transparency: start growing visibility again:
+                self.dimming = False
+        else:
+            # Currently growing in visibility:
+            next_alpha = curr_alpha * (1.0 + CourseHighlight.DIM_STEPS)
+            if next_alpha <= 1.0:
+                self.set_alpha(next_alpha)
+            else:
+                # Reached max visibility, start dimming again:
+                self.set_alpha(1.0)
+                self.dimming = True
+        
+        return self.highlight_artists
+    
+    #--------------------------
+    # set_alpha 
+    #----------------
+    
+    def set_alpha(self, alpha):
+        if self.highlight_artists is None:
+            return
+        
+        for artist in self.highlight_artists:
             artist.set_alpha(alpha)
             
-    @classmethod
-    def get_alpha(cls):
+    #--------------------------
+    # get_alpha 
+    #----------------
+
+    def get_alpha(self):
         # All artists are kept at the same alpha,
         # so just return the first:
-        if cls.highlight_artists is not None:
-            return cls.highlight_artists[0].get_alpha()
+        if self.highlight_artists is not None:
+            return self.highlight_artists[0].get_alpha()
         return None
                                                          
     # ------------------------------------------------------- CoursePoints Class ----------------------
