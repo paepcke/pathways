@@ -29,14 +29,11 @@ import sys
 from threading import Timer
 import time
 
-from PyQt5.Qt import QThread, QTimer, QCoreApplication
-from PySide2.QtCore import SIGNAL
-
 import matplotlib
 #matplotlib.use('TkAgg')
 matplotlib.use('Qt5Agg')
 
-from matplotlib import markers
+from matplotlib import markers, artist
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 
@@ -1129,9 +1126,15 @@ class TSNECourseVisualizer(object):
         lassoing = self.currently_lassoing()
         single_click = not event.dblclick and event.button == 1
         
-        # Ignore single-clicks when we are not poly-lassoing:
+        # Single-clicks when we are not poly-lassoing
+        # are only relevant if on a course highlight. In
+        # that case we remove the highlight:
         if single_click and not lassoing:
-            return 
+            highlights = CourseHighlight.get_instance()
+            highlight = highlights.contains(event) 
+            if highlight:
+                highlights.remove_course_highlight(highlight)
+            return
           
         double_click = event.dblclick
         right_click  = event.button == 3
@@ -1712,9 +1715,7 @@ class TSNECourseVisualizer(object):
             self.control_board_error('Course %s not in model (maybe used draft mode?).' % course_name)
             return
         
-        # If don't have a highlight for the course, make one:
-        if self.course_highlights.get(course_name, None) is None:
-            self.course_highlights[course_name] = CourseHighlight.create_course_highlight(self.ax_tsne, x,y,course_name)
+        CourseHighlight.get_instance().add_course_highlight(self.ax_tsne, x,y,course_name)
         
         self.figure.canvas.draw_idle()
         
@@ -1851,193 +1852,138 @@ class Polygon(object):
 class CourseHighlight(object):
     
     SINGLETON_INSTANCE = None
-    
-    POISON_GREEN = '#00ff00'
-    MARKER_SIZE  = 250
-    #DIM_STEPS    = 0.2
-    DIM_STEPS    = 1.0
-    MIN_ALPHA    = 0.2
-    # Milliseconds between updating fading:
-    #******FADE_ANIMATION_INTERVAL = 0.0500 # seconds i.e. 50ms
-    FADE_ANIMATION_INTERVAL = 0.2 # seconds i.e. 250ms
-    
-    #--------------------------
-    # create_course_highlight 
-    #----------------
-    
-    @classmethod
-    def create_course_highlight(cls, ax, x, y, course_name, center_color=None, edgecolors=None, size=None):
-        
-        highlight_instance_on_entry = CourseHighlight.SINGLETON_INSTANCE
-        
-        if highlight_instance_on_entry is None:
-            # Need to create the singleton instance; init method
-            # will assign the instance to the SINGLETON_INSTANCE class var:
-            CourseHighlight(ax, x, y, course_name, center_color=None, edgecolors=None, size=None)
-            
-        CourseHighlight.SINGLETON_INSTANCE.add_highlight_artist(ax, 
-                                                                x, y, 
-                                                                course_name, 
-                                                                center_color=center_color, 
-                                                                edgecolors=edgecolors, 
-                                                                size=size)
-        return CourseHighlight.SINGLETON_INSTANCE
-    
+
     #--------------------------
     # __init__: singleton contructor 
     #----------------
     
-    def __init__(self, ax, x, y, course_name, center_color=None, edgecolors=None, size=None):
+    def __init__(self):
         super().__init__()
 
         CourseHighlight.SINGLETON_INSTANCE = self
-
-        self.ax = ax
-        self.x = x
-        self.y = y
-        self.course_name = course_name
-        self.center_color = center_color
-        self.edgecolors = edgecolors
-        self.size = size
-        self.highlight_artists = []
-                
-        self.dimming   = True # Currently on the way down to less visibility
-        self.start()
-
-    #--------------------------
-    # run 
-    #----------------
-
-    def run(self):
-        self.animation = Timer(CourseHighlight.FADE_ANIMATION_INTERVAL, self.update_fade_in_out)
-        self.animation.start()
-  
-    #--------------------------
-    # add_highlight_artist
-    #----------------
-
-    def add_highlight_artist(self, ax, x, y, course_name, center_color=None, edgecolors=None, size=None):
-        
-        if center_color is None:
-            center_color = CourseHighlight.POISON_GREEN
-        if edgecolors is None:
-            edgecolors = CourseHighlight.POISON_GREEN
-        if size is None:
-            size = CourseHighlight.MARKER_SIZE
-            
-        self.x = x
-        self.y = y
-        # First artist?
-        if self.ax is None:
-            self.ax = ax
-        self.highlight_artist = ax.scatter(x,y,
-                                           c=center_color,
-                                           edgecolors=edgecolors,
-                                           s=size,
-                                           label=course_name,
-                                           marker='*'
-                                           )
-        self.highlight_artist.set_alpha(1.0)
-        self.update_animation(self.highlight_artist)
+        self.highlight_artists = {}
         
     #--------------------------
-    # update_animation 
+    # get_instance 
     #----------------
-
-    def update_animation(self, highlight_artist, run=True):
-        
-        if not run:
-            # Shut down the animation:
-            self.animation.stop()
-            for artist in self.highlight_artists:
-                artist.set_alpha(1.0)
-                return
-        
-        # Add the new highlight point to the set of 
-        # animated artists:
-        
-        if not highlight_artist in self.highlight_artists:
-            self.highlight_artists.append(highlight_artist)
-            
-    #--------------------------
-    # update_fade_in_out 
-    #----------------
-
-    def update_fade_in_out(self): 
-        '''
-        Called for each animation iteration.
-        
-        @param frame_number: iteration number of calls to this method, or next
-            frame item, if FuncAnimation() was called with parameter 'frames='
-            being an iterable.
-        @type frame_number: any
-        '''
-        
-        # If no highlight artists yet, do nothing.
-        # Only happens on first (manual) call:
-        if len(self.highlight_artists) == 0:
-            return
-        
-        curr_alpha = self.get_alpha()
-        if self.dimming:
-            if curr_alpha >= self.MIN_ALPHA:
-                # Dim further
-                #*****self.set_alpha(curr_alpha * (1.0 - CourseHighlight.DIM_STEPS))
-                self.set_alpha(0.1)
-            else: 
-                # Reached near-transparency: start growing visibility again:
-                self.dimming = False
+    
+    @classmethod
+    def get_instance(cls):
+        if CourseHighlight.SINGLETON_INSTANCE is None:
+            # Need to create the singleton instance; init method
+            # will assign the instance to the SINGLETON_INSTANCE class var:
+            return CourseHighlight()
         else:
-            # Currently growing in visibility:
-            next_alpha = curr_alpha * (1.0 + CourseHighlight.DIM_STEPS)
-            if next_alpha <= 1.0:
-                #****self.set_alpha(next_alpha)
-                self.set_alpha(1.0)
-            else:
-                # Reached max visibility, start dimming again:
-                self.set_alpha(1.0)
-                self.dimming = True
+            return CourseHighlight.SINGLETON_INSTANCE
         
-        self.draw_artists()
-                    
-        # Schedule the next one:
-        self.animation = Timer(CourseHighlight.FADE_ANIMATION_INTERVAL, self.update_fade_in_out)
-        self.animation.start()
-        
-        return self.highlight_artists
-    
     #--------------------------
-    # draw_artists 
+    # add_course_highlight 
     #----------------
     
-    def draw_artists(self):
+    def add_course_highlight(self, ax, x, y, course_name):
         '''
-        Refresh just the highlight marks.
+        Add a course scatter dot highlight: an annotation
+        with an arrow to the dot, and the name of the course
+        in a plaque.
+        
+        @param ax: the chart with the dots
+        @type ax: subplot
+        @param x: dot's x coord
+        @type x: float
+        @param y: dot's y coord
+        @type y: float
+        @param course_name: text for the annotation plaque
+        @type course_name: string
+        @return: annotation object
+        @return: annotation
         '''
-        plt.draw()
         
-    #--------------------------
-    # set_alpha 
-    #----------------
-    
-    def set_alpha(self, alpha):
-        if self.highlight_artists is None:
-            return
-        
-        for artist in self.highlight_artists:
-            artist.set_alpha(alpha)
-            
-    #--------------------------
-    # get_alpha 
-    #----------------
+        self.x  = x
+        self.y  = y
+        self.ax = ax
 
-    def get_alpha(self):
-        # All artists are kept at the same alpha,
-        # so just return the first:
-        if self.highlight_artists is not None:
-            return self.highlight_artists[0].get_alpha()
-        return None
-                                                         
+        # Already have an annotation on this course?
+        try:
+            artist = self.highlight_artists[course_name]
+            return artist
+        except KeyError:
+            pass
+
+        # No, new course:
+        self.highlight_artist = ax.annotate(course_name,
+                                            xy=(x,y), xycoords='data',
+                                            xytext=(-70,-80), textcoords='offset points',
+                                            size=20,
+                                            bbox=dict(boxstyle="round4,pad=.5", fc="0.8"),
+                                            arrowprops=dict(arrowstyle="->",
+                                                            connectionstyle="angle,angleA=0,angleB=-90,rad=10")
+                                            )
+        self.highlight_artists[course_name] = self.highlight_artist
+        return self.highlight_artist
+    
+    #--------------------------
+    #  remove_course_highlight
+    #----------------
+    
+    def remove_course_highlight(self, course_name_or_highlight_artist):
+        
+        if isinstance(course_name_or_highlight_artist, matplotlib.text.Annotation):
+            course_name = course_name_or_highlight_artist.get_text()
+        else:
+            course_name = course_name_or_highlight_artist
+        try:
+            self.highlight_artists[course_name].remove()
+            del self.highlight_artists[course_name]
+        except KeyError:
+            pass
+        
+        self.ax.get_figure().canvas.draw_idle()
+        
+    #--------------------------
+    # remove_all_course_highlights 
+    #----------------
+    
+    def remove_all_course_highlights(self):
+        course_names = self.highlight_artists.keys()
+        for course_name in course_names:
+            # Entries in the dict are removed by this call:
+            self.remove_course_highlight(course_name)
+        
+    #--------------------------
+    # course_names 
+    #----------------
+    
+    def course_names(self):
+        return self.highlight_artists.keys()
+    
+    #--------------------------
+    # contains 
+    #----------------
+    
+    def contains(self, mouse_event):
+        '''
+        Given a mouse event, return a highlight artist
+        if that artist contains the mouse event location.
+        Else return False
+        
+        @param mouse_event: event containing x/y coords
+        @type mouse_event: mouseevent.
+        '''
+        for highlight_artist in self.highlight_artists.values():
+            if highlight_artist.contains(mouse_event):
+                return highlight_artist
+        return False
+        
+#     #--------------------------
+#     # draw_artists 
+#     #----------------
+#     
+#     def draw_artists(self):
+#         '''
+#         Refresh just the annotations:
+#         '''
+#         plt.draw()
+#         
     # ------------------------------------------------------- CoursePoints Class ----------------------
 
 class CoursePoints(dict):
