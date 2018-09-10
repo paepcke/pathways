@@ -555,11 +555,9 @@ class TSNECourseVisualizer(object):
             self.restart(init_parms)
         elif msg_code == 'where_is':
             # Highlight the dot that represents the course.
-            # If msg.state == 'show_enrollment', we show
-            # this course's co-enrollment history:
             try:
                 course_name = msg.state 
-                self.add_course_highlight(course_name, show_enrollment_chart=True)
+                self.add_course_highlight(course_name)
             except Exception as e:
                 logErr("Error in where_is; course_name: %s (%s)" % (course_name, repr(e)))
         elif msg_code == 'top10':
@@ -583,7 +581,7 @@ class TSNECourseVisualizer(object):
 
         elif msg_code == 'enrollment_history':
             course_name = msg.state
-            EnrollmentPlotter(self, [course_name], block=False)
+            self.show_enrollment_history(course_name)
             
         return restart_timer
     
@@ -1268,6 +1266,14 @@ class TSNECourseVisualizer(object):
         return self.selection_polygon is not None
 
     #--------------------------
+    # show_enrollment_history 
+    #----------------
+        
+    def show_enrollment_history(self, course_name):
+        EnrollmentPlotter(self, [course_name], block=False)
+        self.ax_tsne.get_figure().canvas.draw_idle()
+        
+    #--------------------------
     # disconnect 
     #----------------
 
@@ -1708,7 +1714,7 @@ class TSNECourseVisualizer(object):
     # add_course_highlight 
     #----------------
     
-    def add_course_highlight(self, course_name, show_enrollment_chart=False):
+    def add_course_highlight(self, course_name):
         try:
             x,y = self.course_xy[course_name]
         except KeyError:
@@ -1718,7 +1724,6 @@ class TSNECourseVisualizer(object):
         CourseHighlight.get_instance().add_course_highlight(self.ax_tsne, x,y,course_name)
         
         self.figure.canvas.draw_idle()
-        
 
     #--------------------------
     # quit 

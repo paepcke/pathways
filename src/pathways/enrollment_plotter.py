@@ -33,7 +33,7 @@ class EnrollmentPlotter(object):
         
         self.fig.canvas.mpl_connect("close_event", parent.on_enroll_history_close)
         
-        plt.show()
+        plt.show(block=block)
         
     def get_sums(self, course_list):
         conn = sqlite3.connect(self.db_file)
