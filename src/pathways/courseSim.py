@@ -97,6 +97,9 @@ class TsneCourseExplorer(object):
                                     args=(self.vector_creator,),
                                     kwargs=kwargs
                                     )
+        #***********
+        #self.tsne_process.daemon = True
+        #***********
         self.tsne_process.start()
         
 
@@ -104,7 +107,6 @@ class TsneCourseExplorer(object):
         print("In main: Msg from control: %s, %s" % (msg.msg_code, msg.state))
         msg_code = msg.msg_code
         if msg_code == 'stop':
-            self.keep_going = False
             self.tsne_viz_to_queue.put(Message('stop', None))
         else:
             if self.debug:
@@ -124,8 +126,18 @@ class TsneCourseExplorer(object):
         
         # Does the viz want to restart?
         elif msg.msg_code == 'restart':
+            #**********
+            print("*****Control: Got restart request from Tsne. Exitcode: '%s'" % self.tsne_process.exitcode)
+            #**********
+            self.tsne_viz_to_queue.put(Message('kill_yourself', None))
             self.tsne_process.terminate()
+            #**********
+            print("*****Control: calling join...(Exitcode: '%s')" % self.tsne_process.exitcode)
+            #**********
             self.tsne_process.join()
+            #**********
+            print("*****Control: returned from join...(Exitcode: '%s')" % self.tsne_process.exitcode)
+            #**********
             # state will be a dict of initialization parms 
             # for the new process:
             self.start_tsne_process(msg.state)
@@ -133,6 +145,7 @@ class TsneCourseExplorer(object):
         elif msg.msg_code == 'stop':
             self.tsne_process.terminate()
             self.tsne_process.join()
+            self.keep_going = False
         else:    
             # Just forward to the control surface:
             self.send_to_control(msg)

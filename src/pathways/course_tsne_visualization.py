@@ -31,8 +31,12 @@ import time
 
 from PyQt5.Qt import QThread, QTimer, QCoreApplication
 from PySide2.QtCore import SIGNAL
-from matplotlib import markers
+
 import matplotlib
+#matplotlib.use('TkAgg')
+matplotlib.use('Qt5Agg')
+
+from matplotlib import markers
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 
@@ -45,10 +49,6 @@ from pathways.common_classes import Message
 from pathways.course_sim_analytics import CourseSimAnalytics
 from pathways.course_vector_creation import CourseVectorsCreator
 from pathways.enrollment_plotter import EnrollmentPlotter
-
-
-#matplotlib.use('TkAgg')
-matplotlib.use('QT5Agg')
 
 #from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -551,6 +551,8 @@ class TSNECourseVisualizer(object):
             except FileNotFoundError:
                 logErr('Restore request failed: %s does not exist.' % msg.state)
                 restart_timer = True
+        elif msg_code == 'kill_yourself':
+            sys.exit(0)
         elif msg_code == 'recompute':
             # Exit this instance and start a new one with
             # the current class var values of TSNECourseVisualizer:
@@ -1046,8 +1048,6 @@ class TSNECourseVisualizer(object):
         # Clean up:
         self.close()
         self.send_to_main(Message('restart', init_parm_dict))
-        time.sleep(0.5)
-        sys.exit(0)
      
     #--------------------------
     # close 
@@ -1063,10 +1063,9 @@ class TSNECourseVisualizer(object):
         method.
         
         '''
-        
-        
-        # Doesn't close the windows:
-        plt.close('all')
+        pass
+        # Doesn't close the windows; just clears them:
+        # plt.close('all')
         #******** Hangs with window empty if we do the following
 #         for fignum in plt.get_fignums():
 #             plt.close(plt.figure(fignum))
