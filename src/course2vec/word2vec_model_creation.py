@@ -277,7 +277,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         
         save_dir = os.path.dirname(training_filename)
         result_objects = []
-        with open(grid_results_save_file_name, 'w') as grid_results_save_fd:
+        with open(grid_results_save_file_name, 'a') as grid_results_save_fd:
             for vec_size in vector_sizes:
                 for win_size in window_sizes:
                     self.model = self.create_model(sentences, vec_size=vec_size, win_size=win_size)
