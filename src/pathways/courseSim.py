@@ -55,7 +55,8 @@ class TsneCourseExplorer(object):
         if msg.msg_code != 'ready':
             raise ValueError("Was expecting 'ready' message from viz process.")
         
-        # Raise the control surface, b/c it gets buried by the viz:
+        # Raise the control surface, b/c it gets buried by the viz
+        # (Doesn't work):
         self.send_to_control(msg_code='raise')
         
         self.keep_going = True
@@ -96,6 +97,9 @@ class TsneCourseExplorer(object):
                                     args=(self.vector_creator,),
                                     kwargs=kwargs
                                     )
+        #***********
+        #self.tsne_process.daemon = True
+        #***********
         self.tsne_process.start()
         
 
@@ -103,7 +107,6 @@ class TsneCourseExplorer(object):
         print("In main: Msg from control: %s, %s" % (msg.msg_code, msg.state))
         msg_code = msg.msg_code
         if msg_code == 'stop':
-            self.keep_going = False
             self.tsne_viz_to_queue.put(Message('stop', None))
         else:
             if self.debug:
@@ -123,6 +126,7 @@ class TsneCourseExplorer(object):
         
         # Does the viz want to restart?
         elif msg.msg_code == 'restart':
+            self.tsne_viz_to_queue.put(Message('kill_yourself', None))
             self.tsne_process.terminate()
             self.tsne_process.join()
             # state will be a dict of initialization parms 
@@ -132,6 +136,7 @@ class TsneCourseExplorer(object):
         elif msg.msg_code == 'stop':
             self.tsne_process.terminate()
             self.tsne_process.join()
+            self.keep_going = False
         else:    
             # Just forward to the control surface:
             self.send_to_control(msg)

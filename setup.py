@@ -22,7 +22,7 @@ setup(
                         'dill>=0.2.8.2',
                         'cffi>=1.11.5',
                         'gensim>=3.5.0',
-                        'pysqlite3 ',
+                        'pysqlite3>=0.2.0',
                         'configparser>=3.3.0',
                         ],
 
