@@ -126,18 +126,9 @@ class TsneCourseExplorer(object):
         
         # Does the viz want to restart?
         elif msg.msg_code == 'restart':
-            #**********
-            print("*****Control: Got restart request from Tsne. Exitcode: '%s'" % self.tsne_process.exitcode)
-            #**********
             self.tsne_viz_to_queue.put(Message('kill_yourself', None))
             self.tsne_process.terminate()
-            #**********
-            print("*****Control: calling join...(Exitcode: '%s')" % self.tsne_process.exitcode)
-            #**********
             self.tsne_process.join()
-            #**********
-            print("*****Control: returned from join...(Exitcode: '%s')" % self.tsne_process.exitcode)
-            #**********
             # state will be a dict of initialization parms 
             # for the new process:
             self.start_tsne_process(msg.state)

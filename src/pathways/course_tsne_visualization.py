@@ -395,11 +395,6 @@ class TSNECourseVisualizer(object):
               
         self.timer = None
         self.init_new_plot(fittedModelFileName=fittedModelFileName)
-        #***********
-#        TSNECourseVisualizer.status = 'newplot'
-#         while TSNECourseVisualizer.status == 'newplot':
-#             self.init_new_plot(fittedModelFileName=fittedModelFileName)
-        #*********** 
         if self.debug:
             print("Exiting __init__ back to __main__")
         sys.exit(0)      
@@ -592,7 +587,6 @@ class TSNECourseVisualizer(object):
         elif msg_code == 'enrollment_history':
             course_name = msg.state
             EnrollmentPlotter(self, [course_name], block=False)
-            #******EnrollmentPlotter(self, [course_name], block=True)
             
         return restart_timer
     
@@ -1064,13 +1058,7 @@ class TSNECourseVisualizer(object):
         
         '''
         pass
-        # Doesn't close the windows; just clears them:
-        # plt.close('all')
-        #******** Hangs with window empty if we do the following
-#         for fignum in plt.get_fignums():
-#             plt.close(plt.figure(fignum))
-        #********
-        
+
     # ---------------------------------------- UI Dynamics --------------
     
     #--------------------------
@@ -1861,7 +1849,6 @@ class Polygon(object):
 
 
 class CourseHighlight(object):
-#****class CourseHighlight(QThread):
     
     SINGLETON_INSTANCE = None
     
