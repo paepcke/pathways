@@ -13,6 +13,7 @@ import time
 import gensim
 from gensim.models import KeyedVectors
 from gensim.models import Word2Vec
+from scipy.optimize.zeros import results_c
 
 
 class Action():
@@ -203,7 +204,12 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     # optimize_model 
     #----------------
     
-    def optimize_model(self, topn=1, sentences=None, cross_lists_file=None, hasHeader=False):
+    def optimize_model(self, 
+                       topn=1, 
+                       sentences=None, 
+                       cross_lists_file=None, 
+                       hasHeader=False,
+                       grid_results_save_file_name=None):
         '''
         Train with a variety of vector sizes and window
         combinations. Run the cross-list validation for
@@ -245,6 +251,18 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             combination
         @rtype: CrossRegistrationTestResult
         '''
+
+        if grid_results_save_file_name is None:
+
+            # Get the name of a temp file with expressive name.
+            # Yes, race condition; but we're alone in the universe:
+            
+            grid_results_save_fd = tempfile.NamedTemporaryFile(prefix='word2vec_grid_results', 
+                                                               suffix='.txt', 
+                                                               dir='/tmp', 
+                                                               delete=False)
+            grid_results_save_file_name = grid_results_save_fd.name
+            grid_results_save_fd.close()
         
         vector_sizes = [50, 100, 150, 200, 250, 300]
         window_sizes = [2, 5, 10]
@@ -257,37 +275,41 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             num_comparisons += len(cross_course_list)
         num_of_cross_lists = len(cross_lists_dict.keys())
         
-        result_objects = []
         save_dir = os.path.dirname(training_filename)
-        for vec_size in vector_sizes:
-            for win_size in window_sizes:
-                self.model = self.create_model(sentences, vec_size=vec_size, win_size=win_size)
-                self.word_vectors = self.model.wv
-                self.vectors     = self.word_vectors.vectors
-                self.vocab       = self.word_vectors.vocab
-                self.index2word  = self.word_vectors.index2word
-                self.wv          = self.word_vectors
-                
-                # Save the model under an appropriate name:
-                save_file = self.make_filename(save_dir, prefix='all_since2000', vec_size=vec_size, win_size=win_size, suffix_no_dot='model')
-                self.save(save_file)
-                (accuracy,match_probabilities) = self.cross_listings_verification(topn=topn, cross_lists_dict=cross_lists_dict)
-                # Create a test result object:
-                result = CrossRegistrationTestResult(topn, 
-                                                     vec_size, 
-                                                     win_size, 
-                                                     accuracy,
-                                                     num_comparisons,
-                                                     num_of_cross_lists,
-                                                     match_probabilities)
-                result_objects.append(result)
-                #*****result_objects.append(['%s/%s' % (vec_size,win_size), accuracy, match_probabilities])
+        result_objects = []
+        with open(grid_results_save_file_name, 'w') as grid_results_save_fd:
+            for vec_size in vector_sizes:
+                for win_size in window_sizes:
+                    self.model = self.create_model(sentences, vec_size=vec_size, win_size=win_size)
+                    self.word_vectors = self.model.wv
+                    self.vectors     = self.word_vectors.vectors
+                    self.vocab       = self.word_vectors.vocab
+                    self.index2word  = self.word_vectors.index2word
+                    self.wv          = self.word_vectors
+                    
+                    # Save the model under an appropriate name:
+                    save_file = self.make_filename(save_dir, prefix='all_since2000', vec_size=vec_size, win_size=win_size, suffix_no_dot='model')
+                    self.save(save_file)
+                    (accuracy,match_probabilities) = self.cross_listings_verification(topn=topn, cross_lists_dict=cross_lists_dict)
+                    # Create a test result object:
+                    result = CrossRegistrationTestResult(topn, 
+                                                         vec_size, 
+                                                         win_size, 
+                                                         accuracy,
+                                                         num_comparisons,
+                                                         num_of_cross_lists,
+                                                         match_probabilities)
+                    result_objects.append(result)
+                    # Save this result to file:
+                    grid_results_save_fd.write(str(result) + '\n')
+                    grid_results_save_fd.flush()
+
         #******
-        print('Number of comparisons: %s' % str(num_comparisons))
-        print('Number of cross list sets: %s' % str(num_of_cross_lists))
-        print('Evaluation results:')
-        for result in result_objects:
-            print(result)       
+#         print('Number of comparisons: %s' % str(num_comparisons))
+#         print('Number of cross list sets: %s' % str(num_of_cross_lists))
+#         print('Evaluation results:')
+#         for result in result_objects:
+#             print(result)       
         #******       
         return result_objects
     
@@ -520,7 +542,7 @@ class CrossRegistrationTestResult(object):
         self.success_probabilities = success_probabilities
         
     def __str__(self):
-        printable = 'Test: vec-%s, win-%s, accuracy-%s num-compares-%s, num-registrations-%s\n%s' %\
+        printable = 'Test: topn-%s, vec-%s, win-%s, accuracy-%s num-compares-%s, num-registrations-%s\nprob-when_successful-%s' %\
             (self.topn, self.vec_size, self.win_size, self.accuracy, self.num_comparisons, self.num_cross_registrations,
              self.success_probabilities)
         return printable
@@ -571,10 +593,11 @@ if __name__ == '__main__':
     
     # Try models for course siblings being the 1st, 2nd, 3rd, and 4th 
     # most likely neighbor course: 
-    for topn in range(4):
-        res_objs = wordvec_creator.optimize_model(topn, sentences, cross_registered_course_filename, hasHeader=False)
-        for res_obj in res_objs:
-            with open(test_results_file, 'a') as fd:
-                fd.write(str(res_obj))
-
+    for topn in range(1,5):
+        res_objs = wordvec_creator.optimize_model(topn, 
+                                                  sentences, 
+                                                  cross_registered_course_filename, 
+                                                  hasHeader=False,
+                                                  grid_results_save_file_name=test_results_file)
+    print('Results are in %s' % test_results_file)
     
