@@ -29,7 +29,7 @@ import sys
 from threading import Timer
 import time
 
-from PyQt5.Qt import QThread, QTimer
+from PyQt5.Qt import QThread, QTimer, QCoreApplication
 from PySide2.QtCore import SIGNAL
 from matplotlib import markers
 import matplotlib
@@ -49,11 +49,6 @@ from pathways.enrollment_plotter import EnrollmentPlotter
 
 #matplotlib.use('TkAgg')
 matplotlib.use('QT5Agg')
-
-
-
-
-
 
 #from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -406,7 +401,8 @@ class TSNECourseVisualizer(object):
 #             self.init_new_plot(fittedModelFileName=fittedModelFileName)
         #*********** 
         if self.debug:
-            print("Exiting __init__ back to __main__")           
+            print("Exiting __init__ back to __main__")
+        sys.exit(0)      
         
     def init_new_plot(self, fittedModelFileName=None):
         
@@ -447,6 +443,7 @@ class TSNECourseVisualizer(object):
         plt.show(block=True)
         if self.debug:
             print("Plot show has unblocked.")
+        sys.exit(0)
 
     # -------------------------------------------  Communication With Control Process if Used -----------
 
@@ -1069,9 +1066,11 @@ class TSNECourseVisualizer(object):
         
         
         # Doesn't close the windows:
-        # plt.close('all')
-        for fignum in plt.get_fignums():
-            plt.figure(fignum).close()
+        plt.close('all')
+        #******** Hangs with window empty if we do the following
+#         for fignum in plt.get_fignums():
+#             plt.close(plt.figure(fignum))
+        #********
         
     # ---------------------------------------- UI Dynamics --------------
     
@@ -1862,17 +1861,19 @@ class Polygon(object):
     # ------------------------------------------------------- CourseHighlight Class ----------------------
 
 
-#******class CourseHighlight(object):
-class CourseHighlight(QThread):
+class CourseHighlight(object):
+#****class CourseHighlight(QThread):
     
     SINGLETON_INSTANCE = None
     
     POISON_GREEN = '#00ff00'
     MARKER_SIZE  = 250
-    DIM_STEPS    = 0.4
+    #DIM_STEPS    = 0.2
+    DIM_STEPS    = 1.0
     MIN_ALPHA    = 0.2
     # Milliseconds between updating fading:
-    FADE_ANIMATION_INTERVAL = 50
+    #******FADE_ANIMATION_INTERVAL = 0.0500 # seconds i.e. 50ms
+    FADE_ANIMATION_INTERVAL = 0.2 # seconds i.e. 250ms
     
     #--------------------------
     # create_course_highlight 
@@ -1922,10 +1923,8 @@ class CourseHighlight(QThread):
     #----------------
 
     def run(self):
-        self.animation = QTimer()
-        self.animation.timeout.connect(self.update_fade_in_out)        
-        self.animation.start(CourseHighlight.FADE_ANIMATION_INTERVAL)
-        self.exec_()
+        self.animation = Timer(CourseHighlight.FADE_ANIMATION_INTERVAL, self.update_fade_in_out)
+        self.animation.start()
   
     #--------------------------
     # add_highlight_artist
@@ -1997,7 +1996,8 @@ class CourseHighlight(QThread):
         if self.dimming:
             if curr_alpha >= self.MIN_ALPHA:
                 # Dim further
-                self.set_alpha(curr_alpha * CourseHighlight.DIM_STEPS)
+                #*****self.set_alpha(curr_alpha * (1.0 - CourseHighlight.DIM_STEPS))
+                self.set_alpha(0.1)
             else: 
                 # Reached near-transparency: start growing visibility again:
                 self.dimming = False
@@ -2005,14 +2005,31 @@ class CourseHighlight(QThread):
             # Currently growing in visibility:
             next_alpha = curr_alpha * (1.0 + CourseHighlight.DIM_STEPS)
             if next_alpha <= 1.0:
-                self.set_alpha(next_alpha)
+                #****self.set_alpha(next_alpha)
+                self.set_alpha(1.0)
             else:
                 # Reached max visibility, start dimming again:
                 self.set_alpha(1.0)
                 self.dimming = True
         
+        self.draw_artists()
+                    
+        # Schedule the next one:
+        self.animation = Timer(CourseHighlight.FADE_ANIMATION_INTERVAL, self.update_fade_in_out)
+        self.animation.start()
+        
         return self.highlight_artists
     
+    #--------------------------
+    # draw_artists 
+    #----------------
+    
+    def draw_artists(self):
+        '''
+        Refresh just the highlight marks.
+        '''
+        plt.draw()
+        
     #--------------------------
     # set_alpha 
     #----------------
