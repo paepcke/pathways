@@ -264,8 +264,13 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             grid_results_save_file_name = grid_results_save_fd.name
             grid_results_save_fd.close()
         
+        #************
+#         vector_sizes = [50, 100, 150, 200, 250, 300]
+#         window_sizes = [2, 5, 10]
+
         vector_sizes = [50, 100, 150, 200, 250, 300]
-        window_sizes = [2, 5, 10]
+        window_sizes = [15, 20, 25]
+        #************
         
         # Get a dict of cross listings as required by the cross list val:
         cross_lists_dict = self.cross_listings_from_file(cross_lists_file, hasHeader)
@@ -304,13 +309,6 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                     grid_results_save_fd.write(str(result) + '\n')
                     grid_results_save_fd.flush()
 
-        #******
-#         print('Number of comparisons: %s' % str(num_comparisons))
-#         print('Number of cross list sets: %s' % str(num_of_cross_lists))
-#         print('Evaluation results:')
-#         for result in result_objects:
-#             print(result)       
-        #******       
         return result_objects
     
     #--------------------------
