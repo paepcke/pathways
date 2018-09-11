@@ -268,8 +268,11 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
 #         vector_sizes = [50, 100, 150, 200, 250, 300]
 #         window_sizes = [2, 5, 10]
 
-        vector_sizes = [50, 100, 150, 200, 250, 300]
-        window_sizes = [15, 20, 25]
+#         vector_sizes = [50, 100, 150, 200, 250, 300]
+#         window_sizes = [15, 20, 25]
+
+        vector_sizes = [350, 400,450, 500, 550, 600]
+        window_sizes = [2, 5, 10, 15, 20, 25]
         #************
         
         # Get a dict of cross listings as required by the cross list val:
