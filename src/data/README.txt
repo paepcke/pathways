@@ -52,3 +52,33 @@ Files for building the course2vec model since 2000.
   Used in course_sim_analytics.py: cross_listings_verification() to
   check whether a model properly predicts the crosslists as the
   nearest courses.
+
+- enrollment_tally.sqlite has info on enrollments and majors.
+  Currently used in the code:
+
+    CREATE TABLE enrollment_tally(
+      "coursename" TEXT,
+      "strm" TEXT,
+      "enrollment" TEXT
+    );
+
+  Also in there:
+
+    CREATE TABLE MajorsSince2000(
+      "emplid" TEXT,
+      "eff_date" TEXT,
+      "strm" TEXT,
+      "major" TEXT
+    );
+    CREATE TABLE IF NOT EXISTS "CourseMajors" (emplid varchar(90), coursename varchar(40), major varchar(20));
+    CREATE TABLE IF NOT EXISTS "EnrlSentencesTooMuch"(
+      "emplid" TEXT,
+      "coursename" TEXT,
+      "major" TEXT,
+      "acad_career" TEXT,
+      "strm" TEXT
+    );
+
+- The Models directory holds all the models that were constructed by
+  course2vec/word2vec_model_creation.py
+

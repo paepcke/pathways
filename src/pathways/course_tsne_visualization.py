@@ -25,15 +25,14 @@ import os
 import pickle
 from queue import Empty  # The regular queue's empty exception
 import re
+from sched import scheduler
 import sys
 from threading import Timer
+import threading
 import time
 
-import matplotlib
-#matplotlib.use('TkAgg')
-matplotlib.use('Qt5Agg')
-
 from matplotlib import markers, artist
+import matplotlib
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 
@@ -46,6 +45,11 @@ from pathways.common_classes import Message
 from pathways.course_sim_analytics import CourseSimAnalytics
 from pathways.course_vector_creation import CourseVectorsCreator
 from pathways.enrollment_plotter import EnrollmentPlotter
+
+
+#matplotlib.use('TkAgg')
+matplotlib.use('Qt5Agg')
+
 
 #from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -581,7 +585,21 @@ class TSNECourseVisualizer(object):
 
         elif msg_code == 'enrollment_history':
             course_name = msg.state
-            self.show_enrollment_history(course_name)
+            #****************
+            #*****self.show_enrollment_history(course_name)
+            timer = threading.Timer(1.0, self.show_enrollment_history, args=[course_name])
+            timer.start()
+            
+#             self.enrollment_chart_scheduler = scheduler()
+#             # Schedule in 0.05 seconds, priority 10 (which is arbitrary,
+#             # since we won't have competing scheduled events:
+#             self.enrollment_chart_scheduler.enter(#0.05,
+#                                                   1.0,
+#                                                   1, 
+#                                                   self.show_enrollment_history, 
+#                                                   argument=(course_name))
+#             self.enrollment_chart_scheduler.run(blocking=False)
+            #****************
             
         return restart_timer
     
@@ -1270,6 +1288,13 @@ class TSNECourseVisualizer(object):
     #----------------
         
     def show_enrollment_history(self, course_name):
+        '''
+        Given a course name, pop up its enrollment
+        history.
+        
+        @param course_name: name of course
+        @type course_name: string
+        '''
         EnrollmentPlotter(self, [course_name], block=False)
         self.ax_tsne.get_figure().canvas.draw_idle()
         
