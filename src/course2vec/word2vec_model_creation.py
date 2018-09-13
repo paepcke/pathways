@@ -13,18 +13,17 @@ import time
 import gensim
 from gensim.models import KeyedVectors
 from gensim.models import Word2Vec
-from scipy.optimize.zeros import results_c
-
 
 class Action():
-    LOAD_MODEL = 0,
-    LOAD_VECTORS = 1,
-    SAVE_MODEL = 2,
-    SAVE_WORD_VECTORS = 3,
-    CREATE_MODEL = 4,
-    CREATE_SENTENCES = 5,
+    LOAD_MODEL = 0
+    LOAD_VECTORS = 1
+    SAVE_MODEL = 2
+    SAVE_WORD_VECTORS = 3
+    CREATE_MODEL = 4
+    CREATE_SENTENCES = 5
     EVALUATE = 6
     OPTIMIZE_MODEL = 7
+    CROSS_LIST_DICT = 8
 
 class Word2VecModelCreator(gensim.models.Word2Vec):
     '''
@@ -68,6 +67,12 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             cross_lists_filename  = saveFileName 
             self.sentences = self.create_course_sentences(training_set_filename, hasHeader=hasHeader)            
             self.optimize_model(self.sentences, cross_lists_filename, hasHeader=hasHeader)
+        elif action == Action.CROSS_LIST_DICT:
+            # Cross listings dict will be available in the cross_listings attr
+            # of the instance.
+            # Provided file must be the cross listings file:
+            cross_lists_filename = actionFileName
+            self.cross_listings = self.cross_listings_from_file(cross_lists_filename, hasHeader)
             
         else:
             raise ValueError("Bad action indicator: '%s' % action")
@@ -362,7 +367,16 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         
         @param topn: test stringency
         @type topn: int
+        @param cross_lists_dict: map course to its cross-registered siblings.
+            May be left null if unknown. In that case cross_lists_filename must
+            be provided.
+        @type cross_lists_dict: {str : [str]}
         @param cross_lists_filename: file with cross listings. No csv header expected
+            If cross_lists_dict provided, no need for this arg, nor the headers arg.
+        @type cross_lists_filename: str
+        @param hasHeader: whether cross_lists_filename has a column header line.
+            Not needed if cross_lists_dict is provided.
+        @type hasHeader: bool
         @return: accuracy as percentage, and a list of probabilities found for 
             successful matches. The higher those probabilities, the better.
         @rtype: (float, [float])

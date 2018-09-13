@@ -111,6 +111,35 @@ class StudentFocusAnalyzer(object):
             student_vectors[major] = vectors_already_in_major
         return student_vectors
 
+class Student(object):
+    
+    NP_CORRESPONDING_ELEMENTS_AXIS = 0
+    
+    def __init__(self, major):
+        self.major = major
+        self.course_vectors = []
+        self.courses = []
+        
+    def add_course(self, course_name, crse_vec):
+        '''
+        
+        @param course_name:
+        @type course_name:
+        @param crse_vec:
+        @type crse_vec:
+        '''
+        self.course_vectors.append(crse_vec)
+        self.courses.append(course_name)
+        
+    def num_vectors(self):
+        return len(self.course_vectors)
+    
+    def sd(self):
+        
+    
+     
+
+
 if __name__ == '__main__':
     
     curr_dir = os.path.dirname(__file__)
