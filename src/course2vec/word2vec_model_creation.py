@@ -9,12 +9,15 @@ import logging
 import os
 import tempfile
 import time
+from enum import Enum
+
+import numpy as np
 
 import gensim
 from gensim.models import KeyedVectors
 from gensim.models import Word2Vec
 
-class Action():
+class Action(Enum):
     LOAD_MODEL = 0
     LOAD_VECTORS = 1
     SAVE_MODEL = 2
@@ -23,12 +26,19 @@ class Action():
     CREATE_SENTENCES = 5
     EVALUATE = 6
     OPTIMIZE_MODEL = 7
-    CROSS_LIST_DICT = 8
+    
+class VerificationMethods(Enum):
+    TOP_N = 1
+    RANK = 2
 
 class Word2VecModelCreator(gensim.models.Word2Vec):
     '''
     classdocs
     '''
+    CROSS_REGISTRATION_FILENAME = 'cross_registered_courses.csv'
+    
+    # The enrollment data
+    TRAINING_FILENAME = 'emplid_crs_major_strm_gt10_2000plus.csv'
 
     #--------------------------
     # __init__ 
@@ -39,6 +49,24 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         Constructor
         '''
         logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
+
+        curr_dir = os.path.dirname(__file__)
+        save_dir = os.path.join(curr_dir, '../data/Word2vec/')
+        
+        # Initialize self.cross_listings dict:
+        cross_registered_course_filename = os.path.join(save_dir, 
+                                                        Word2VecModelCreator.CROSS_REGISTRATION_FILENAME
+                                                        )
+        # The enrollment data:
+        self.training_filename  = os.path.join(save_dir, 
+                                               Word2VecModelCreator.TRAINING_FILENAME
+                                               )
+    
+        # The cross_lists_file must have information about which
+        # courses are cross listed. Format: "course_name, evalunitid".
+        self.cross_listings = self.cross_listings_from_file(cross_registered_course_filename, hasHeader=False)
+        
+        self.sentences = self.create_course_sentences(self.training_filename, hasHeader=True)
         
         if action is None:
             # If nothing to do, just provide the instance
@@ -60,19 +88,13 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             (self.model_filename, self.wv_filename) = self.save(saveFileName)
         elif action == Action.EVALUATE:
             # Run the cross-registration verification prediction accuracy test:
-            accuracy = self.cross_listings_verification()
+            accuracy = self.verify_model()
             self.logInfo('Accuracy cross registration prediction: %s' % accuracy)
         elif action == Action.OPTIMIZE_MODEL:
             training_set_filename = actionFileName
             cross_lists_filename  = saveFileName 
             self.sentences = self.create_course_sentences(training_set_filename, hasHeader=hasHeader)            
             self.optimize_model(self.sentences, cross_lists_filename, hasHeader=hasHeader)
-        elif action == Action.CROSS_LIST_DICT:
-            # Cross listings dict will be available in the cross_listings attr
-            # of the instance.
-            # Provided file must be the cross listings file:
-            cross_lists_filename = actionFileName
-            self.cross_listings = self.cross_listings_from_file(cross_lists_filename, hasHeader)
             
         else:
             raise ValueError("Bad action indicator: '%s' % action")
@@ -210,11 +232,11 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     #----------------
     
     def optimize_model(self, 
-                       topn=1, 
-                       sentences=None, 
-                       cross_lists_file=None, 
-                       hasHeader=False,
-                       grid_results_save_file_name=None):
+                       verification_method,
+                       grid_results_save_file_name,
+                       vector_sizes=None,
+                       window_sizes=None,
+                       topn = 4):
         '''
         Train with a variety of vector sizes and window
         combinations. Run the cross-list validation for
@@ -225,36 +247,32 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             ['veclenFinal/winFinal', accuracy]
             ]
             
-        The cross_lists_file must have information about which
-        courses are cross listed. Format: "course_name, evalunitid".
-        The sentences training dict must be of the form expected by
-        method create_course_sentences().
-        
-        The topn parameter controls how stringent the success test is
+        The topn parameter is relevant only for the top-n eval method. 
+        The parameter controls how stringent the success test is
         to be. A topn == 1 means that a cross listed course must be
         the highest-probability co-course in the similarities list
         of the most_similar() result when compared to another cross
         list of the same course. A topn == 2 means that the course must
         be among the top 2, etc.
         
-        The method returns a triplet: the number of course comparisons
-        made, the number of cross-listed course sets, and a 2D matrix
-        of results. Models are trained for all combinations of 6 vector
-        sizes, and 2 window sizes. Each row in the result matrix contains
-        a two-tuple, an experiment condition, such as '50/2', and the accuracy
-        for that setting of vector length 50, and window size 2. 
+        Models are trained for all combinations of vector
+        sizes, and window sizes as given in vec_sizes and win_sizes.
         
-        @param topn: test stringency
+        @param verification_method: code of method to use for evaluationg the
+            models that are created. Options are as in enum class: VerificationMethods.
+        @type verification_method: int
+        @param grid_results_save_file_name: name of file to which the results will be written
+        @type grid_results_save_file_name: str
+        @param vector_sizes: a list of vector dimension numbers to test.
+        @type vector_sizes: [int]
+        @param window_sizes: a list of window sizes to test.
+        @type window_sizes: [int]
+        @param topn: test stringency: only needed if verification method is topn-n
         @type topn: int
-        @param sentences: list of course sets
-        @type sentences: [str]
-        @param cross_lists_file: csv file of cross listed courses.  
-        @type cross_lists_file: str
-        @param hasHeader: whether the cross_lists_file has a column header name row
-        @type hasHeader: bool
         @return: a list of result objects, one for each vector-size/window-size
-            combination
-        @rtype: CrossRegistrationTestResult
+            combination. The subclass of result objs is determined by the 
+            verification_method.
+        @rtype: [CrossRegistrationTestResult]
         '''
 
         if grid_results_save_file_name is None:
@@ -269,31 +287,29 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             grid_results_save_file_name = grid_results_save_fd.name
             grid_results_save_fd.close()
         
-        #************
-#         vector_sizes = [50, 100, 150, 200, 250, 300]
-#         window_sizes = [2, 5, 10]
-
-#         vector_sizes = [50, 100, 150, 200, 250, 300]
-#         window_sizes = [15, 20, 25]
-
-        vector_sizes = [350, 400,450, 500, 550, 600]
-        window_sizes = [2, 5, 10, 15, 20, 25]
-        #************
-        
-        # Get a dict of cross listings as required by the cross list val:
-        cross_lists_dict = self.cross_listings_from_file(cross_lists_file, hasHeader)
         # Compute number of pairs that will be compared:
         num_comparisons = 0
-        for cross_course_list in cross_lists_dict.values():
+        for cross_course_list in self.cross_listings.values():
             num_comparisons += len(cross_course_list)
-        num_of_cross_lists = len(cross_lists_dict.keys())
+        num_of_cross_lists = len(self.cross_listings.keys())
         
-        save_dir = os.path.dirname(training_filename)
+        save_dir = os.path.dirname(self.training_filename)
         result_objects = []
         with open(grid_results_save_file_name, 'a') as grid_results_save_fd:
+            # First, write one line with the number of cross list sets,
+            # and the total number of course comparisons:
+            grid_results_save_fd.write('Number of cross list sets: %s; Number of comparisons: %s\n' %\
+                                       (num_of_cross_lists, num_comparisons)
+                                       )
+            grid_results_save_fd.flush()
+             
             for vec_size in vector_sizes:
                 for win_size in window_sizes:
-                    self.model = self.create_model(sentences, vec_size=vec_size, win_size=win_size)
+                    #********
+                    #*****self.model = self.create_model(self.sentences, vec_size=vec_size, win_size=win_size)
+                    save_file = self.make_filename(save_dir, prefix='all_since2000', vec_size=vec_size, win_size=win_size, suffix_no_dot='model')
+                    self.model = self.load_model(save_file)
+                    #********
                     self.word_vectors = self.model.wv
                     self.vectors     = self.word_vectors.vectors
                     self.vocab       = self.word_vectors.vocab
@@ -302,16 +318,30 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                     
                     # Save the model under an appropriate name:
                     save_file = self.make_filename(save_dir, prefix='all_since2000', vec_size=vec_size, win_size=win_size, suffix_no_dot='model')
-                    self.save(save_file)
-                    (accuracy,match_probabilities) = self.cross_listings_verification(topn=topn, cross_lists_dict=cross_lists_dict)
-                    # Create a test result object:
-                    result = CrossRegistrationTestResult(topn, 
-                                                         vec_size, 
-                                                         win_size, 
-                                                         accuracy,
-                                                         num_comparisons,
-                                                         num_of_cross_lists,
-                                                         match_probabilities)
+                    #*********
+                    #****self.save(save_file)
+                    #*********                    
+                    
+                    if verification_method == VerificationMethods.TOP_N:
+                        accuracy = self.verify_model(topn=topn)
+                        # Create a test result object:
+                        result = CrossRegistrationTopNResult(topn,
+                                                             accuracy, 
+                                                             vec_size, 
+                                                             win_size, 
+                                                             num_comparisons,
+                                                             num_of_cross_lists
+                                                             )
+                    elif verification_method == VerificationMethods.RANK:
+                        (mean_rank, median_rank, sd_rank) = self.verify_model(verification_method)
+                        result = CrossRegistrationRankResult(mean_rank,
+                                                             median_rank,
+                                                             sd_rank,
+                                                             vec_size, 
+                                                             win_size, 
+                                                             num_comparisons,
+                                                             num_of_cross_lists
+                                                             )
                     result_objects.append(result)
                     # Save this result to file:
                     grid_results_save_fd.write(str(result) + '\n')
@@ -343,90 +373,185 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         '''
         
         return os.path.join(the_dir, '%s_vec%s_win%s.%s' % (prefix, vec_size, win_size, suffix_no_dot))
-    
+
+#********************    
+#     #--------------------------
+#     # cross_list_verification 
+#     #----------------
+#     
+#     def verify_model(self, topn=1, cross_lists_dict=None, cross_lists_filename=None, hasHeader=False):
+#         '''
+#         Given filename to csv file:
+#         
+#            course_name, evalunitid
+#         
+#         that is ordered by evalunitid,    
+#         return the percentage of times that the word vectors
+#         computed cross listed courses as the most similar.
+#         
+#         The topn parameter controls how stringent the success test is
+#         to be. A topn == 1 means that a cross listed course must be
+#         the highest-probability co-course in the similarities list
+#         of the most_similar() result when compared to another cross
+#         list of the same course. A topn == 2 means that the course must
+#         be among the top 2, etc.
+#         
+#         @param topn: test stringency
+#         @type topn: int
+#         @param cross_lists_dict: map course to its cross-registered siblings.
+#             May be left null if unknown. In that case cross_lists_filename must
+#             be provided.
+#         @type cross_lists_dict: {str : [str]}
+#         @param cross_lists_filename: file with cross listings. No csv header expected
+#             If cross_lists_dict provided, no need for this arg, nor the headers arg.
+#         @type cross_lists_filename: str
+#         @param hasHeader: whether cross_lists_filename has a column header line.
+#             Not needed if cross_lists_dict is provided.
+#         @type hasHeader: bool
+#         @return: accuracy as percentage, and a list of probabilities found for 
+#             successful matches. The higher those probabilities, the better.
+#         @rtype: (float, [float])
+#         '''
+#         
+#         if cross_lists_dict is None:
+#             cross_listings = self.cross_listings_from_file(cross_lists_filename, hasHeader)
+#         else:
+#             cross_listings = cross_lists_dict
+#             
+#         # Got the dict. Check similarities:
+#         num_cases      = 0
+#         num_successes  = 0
+#         num_failures   = 0
+#         # List of match probabilities of successful matches
+#         # between courses and their cross-reg sibs:
+#         match_success_probabilities = []
+#         
+#         for first_sib, other_sibs in cross_listings.items():
+#             # Check each of the other_sibs against first_sib.
+#             # each should have the first_sib as most similar:
+#             for other_sib in other_sibs:
+#                 num_cases += 1
+#                 # Get single-element array of two-tuples, like
+#                 #   [('Foo', 0.53), ('Bar', 0.3),...] in high-low 
+#                 # sim order. So check name of first tuple:
+# 
+#                 try:
+#                     # most_similar() returns: ((course1, probability1), (course2, probability2)...)
+#                     # *zip(tuple-list) will return a list of the courses, and a list of
+#                     # the probabilities:
+#                     courses, probabilities = zip(*self.wv.most_similar(other_sib))
+#                 except KeyError:
+#                     # Course not in vocabulary. This happens if the class had
+#                     # fewer than 10 students, or nobody ever got a grade.
+#                     continue 
+#                 # Check whether the first sibling is in the 
+#                 # top-n most similar courses, and note the course's
+#                 # probability if the course is within topn:
+#                 try:
+#                     topn_predictions = courses[:topn] 
+#                     first_sib_position = topn_predictions.index(first_sib)
+#                 except ValueError:
+#                     # The cross listed course is not in the topn:
+#                     num_failures += 1
+#                     continue
+#                 num_successes  += 1
+#                 match_success_probabilities.append(probabilities[first_sib_position])
+#                 
+#         return (100 * num_successes / num_cases, match_success_probabilities)        
+#********************
+
     #--------------------------
-    # cross_list_verification 
+    # verify_model 
     #----------------
-    
-    def cross_listings_verification(self, topn=1, cross_lists_dict=None, cross_lists_filename=None, hasHeader=False):
+
+    def verify_model(self, verification_method, topn=4):
         '''
-        Given filename to csv file:
         
-           course_name, evalunitid
-        
-        that is ordered by evalunitid,    
-        return the percentage of times that the word vectors
-        computed cross listed courses as the most similar.
-        
-        The topn parameter controls how stringent the success test is
-        to be. A topn == 1 means that a cross listed course must be
-        the highest-probability co-course in the similarities list
-        of the most_similar() result when compared to another cross
-        list of the same course. A topn == 2 means that the course must
-        be among the top 2, etc.
-        
-        @param topn: test stringency
+        @param verification_method: which of the VerificationMethod to use.
+            Choices are TOP_N and RANK. 
+        @type verification_method: int
+        @param topn: Only needed for TOP_N method: rank within which 
+            sibling must be found.
         @type topn: int
-        @param cross_lists_dict: map course to its cross-registered siblings.
-            May be left null if unknown. In that case cross_lists_filename must
-            be provided.
-        @type cross_lists_dict: {str : [str]}
-        @param cross_lists_filename: file with cross listings. No csv header expected
-            If cross_lists_dict provided, no need for this arg, nor the headers arg.
-        @type cross_lists_filename: str
-        @param hasHeader: whether cross_lists_filename has a column header line.
-            Not needed if cross_lists_dict is provided.
-        @type hasHeader: bool
-        @return: accuracy as percentage, and a list of probabilities found for 
-            successful matches. The higher those probabilities, the better.
-        @rtype: (float, [float])
+        @return: accuracy as measured by the requested verification method:
+            TOP_N: accuracy percentage
+            RANK: tuple of mean, median, sdev rank of siblings
+        @rtype: {float if TOP_N | (float, float,float) if RANK
         '''
         
-        if cross_lists_dict is None:
-            cross_listings = self.cross_listings_from_file(cross_lists_filename, hasHeader)
-        else:
-            cross_listings = cross_lists_dict
-            
-        # Got the dict. Check similarities:
-        num_cases      = 0
-        num_successes  = 0
-        num_failures   = 0
-        # List of match probabilities of successful matches
-        # between courses and their cross-reg sibs:
-        match_success_probabilities = []
+        if verification_method == VerificationMethods.TOP_N:
+            self.topn = topn 
+            # Got the dict. Check similarities:
+            self.num_cases      = 0
+            self.num_successes  = 0
+            self.num_failures   = 0
+            # List of match probabilities of successful matches
+            # between courses and their cross-reg sibs:
+            self.match_success_probabilities = []
+
+            self._loop_through_cross_lists(self.cross_listings_verification_topn_method_helper)
+      
+            # Return the overall accuracy, a percentage of successes of cases:
+            return (100 * self.num_successes / self.num_cases)
+
+        elif verification_method == VerificationMethods.RANK:
+            self.sibling_ranks = []
+            self._loop_through_cross_lists(self.cross_listings_verification_rank_method_helper)
+            return(np.mean(self.sibling_ranks), 
+                   np.median(self.sibling_ranks),
+                   np.std(self.sibling_ranks)
+                   )
         
-        for first_sib, other_sibs in cross_listings.items():
+        else:
+            raise ValueError("Verification method %s does not exist." % verification_method)        
+
+    #--------------------------
+    # cross_listings_verification_rank_method_helper 
+    #----------------
+
+    def cross_listings_verification_rank_method_helper (self, reference_sib, other_sib):
+        rank_of_other_sib = self.wv.rank(reference_sib, other_sib)
+        self.sibling_ranks.append(rank_of_other_sib)
+
+    #--------------------------
+    # cross_listings_verification_topn_method_helper 
+    #----------------
+
+    def cross_listings_verification_topn_method_helper(self, reference_sib, other_sib):
+        
+        # Method most_similar() returns: ((course1, probability1), (course2, probability2)...)
+        # *zip(tuple-list) will return a list of the courses, and a list of
+        # the probabilities:
+        courses, _probabilities = zip(*self.wv.most_similar(other_sib))
+        
+        # Check whether the first sibling is in the 
+        # top-n most similar courses, and note the course's
+        # probability if the course is within topn:
+        try:
+            topn_predictions = courses[:self.topn] 
+            topn_predictions.index(reference_sib)
+        except ValueError:
+            # The cross listed course is not in the topn:
+            self.num_failures += 1
+        else:
+            self.num_successes  += 1
+
+    #--------------------------
+    # _loop_through_cross_lists
+    #----------------
+
+    def _loop_through_cross_lists(self, validation_callback):
+        
+        for first_sib, other_sibs in self.cross_listings.items():
             # Check each of the other_sibs against first_sib.
             # each should have the first_sib as most similar:
             for other_sib in other_sibs:
-                num_cases += 1
-                # Get single-element array of two-tuples, like
-                #   [('Foo', 0.53), ('Bar', 0.3),...] in high-low 
-                # sim order. So check name of first tuple:
-
                 try:
-                    # most_similar() returns: ((course1, probability1), (course2, probability2)...)
-                    # *zip(tuple-list) will return a list of the courses, and a list of
-                    # the probabilities:
-                    courses, probabilities = zip(*self.wv.most_similar(other_sib))
+                    validation_callback(reference_sib=first_sib, other_sib=other_sib)
                 except KeyError:
                     # Course not in vocabulary. This happens if the class had
                     # fewer than 10 students, or nobody ever got a grade.
                     continue 
-                # Check whether the first sibling is in the 
-                # top-n most similar courses, and note the course's
-                # probability if the course is within topn:
-                try:
-                    topn_predictions = courses[:topn] 
-                    first_sib_position = topn_predictions.index(first_sib)
-                except ValueError:
-                    # The cross listed course is not in the topn:
-                    num_failures += 1
-                    continue
-                num_successes  += 1
-                match_success_probabilities.append(probabilities[first_sib_position])
-                
-        return (100 * num_successes / num_cases, match_success_probabilities)        
 
     #--------------------------
     # cross_listings_from_file
@@ -515,62 +640,81 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     def logDebug(self, msg):
         logging.debug(msg)
                 
-# -------------------------------------------- CrossRegistrationTestResult ------------                
+# -------------------------------------------- CrossRegistrationTestResult Classes and Subclasses ------------                
                 
 class CrossRegistrationTestResult(object):
     
-    def __init__(self, topn, vec_size, win_size, accuracy, num_comparisons, num_cross_registrations, success_probabilities):
+    def __init__(self, vec_size, win_size, num_comparisons, num_cross_list_sets):
         '''
         Instances encapsulate the result of one test for predicting
-        cross registered courses. The accuracy is the percentage of time
-        that a cross-registration sibling was in the topn most similar 
-        course list as found by the most_similar() method. 
+        cross registered courses.  
         
         Success probabilities is a list of the probabilities at which
         most_similar() estimated the successfully found sibling.
         
-        @param topn: where in the list of most similar courses a cross registered
-            sibling had to appear.
-        @type topn: int
         @param vec_size: vector size used in the test
         @type vec_size: int
         @param win_size: window size of the test
         @type win_size: int
-        @param accuracy: percentage of time cross registered courses were
-            found to be most similar with topn
-        @type accuracy: float
         @param num_comparisons: number of pairwise sibling comparisons
         @type num_comparisons: int
-        @param num_cross_registrations: how many sets of cross registered siblings
+        @param num_cross_list_sets: how many sets of cross registered siblings
             were involved in the test
-        @type num_cross_registrations: int
-        @param success_probabilities: list of the probabilities at which siblings in 
-            the test who were within topn similar were estimated to be close by.
-        @type success_probabilities: [float]
+        @type num_cross_list_sets: int
         '''
-        self.topn = topn
         self.vec_size = vec_size
         self.win_size = win_size
-        self.accuracy = accuracy
         self.num_comparisons = num_comparisons
-        self.num_cross_registrations = num_cross_registrations
-        self.success_probabilities = success_probabilities
+        self.num_cross_registrations = num_cross_list_sets
+
+class CrossRegistrationTopNResult(CrossRegistrationTestResult):
+        
+    # All the args of the parent init, plus the topn number:    
+    def __init__(self, topn, accuracy, *args):
+        '''
+        Create a result of a top-n method model evaluation.
+        The accuracy is the percentage of time
+        that a cross-registration sibling was in the topn most similar 
+        course list as found by the most_similar() method.
+        
+        @param topn: where in the list of most similar courses a cross registered
+            sibling had to appear.
+        @type topn: int
+        '''
+        super(CrossRegistrationTestResult).__init__(*args)
+        self.topn = topn
+        self.accuracy = accuracy
         
     def __str__(self):
         printable = 'Test: topn-%s, vec-%s, win-%s, accuracy-%s num-compares-%s, num-registrations-%s\nprob-when_successful-%s' %\
-            (self.topn, self.vec_size, self.win_size, self.accuracy, self.num_comparisons, self.num_cross_registrations,
+            (self.topn, self.vec_size, self.win_size, self.accuracy, self.num_comparisons, self.num_cross_list_sets,
              self.success_probabilities)
         return printable
         
-
+class CrossRegistrationRankResult(CrossRegistrationTestResult):
+    
+    def __init__(self, mean_rank, median_rank, sd_rank, *args ):
+        
+        super().__init__(*args)
+        self.mean_rank = mean_rank
+        self.median_rank = median_rank
+        self.sd_rank = sd_rank
+        self.args = args
+        
+    def __str__(self):
+        printable = 'vecdim,winsize,mean_rank,median_rank,sd_rank\n'
+        printable += '%d,%d,%.1f,%.1f,%.1f' % (self.vec_size, 
+                                               self.win_size, 
+                                               self.mean_rank,
+                                               self.median_rank,
+                                               self.sd_rank)
+        return printable
+    
 # -------------------------------------------- Main -------------------------
 
 if __name__ == '__main__':
     curr_dir = os.path.dirname(__file__)
     save_dir = os.path.join(curr_dir, '../data/Word2vec/')
-    
-    # The enrollment data:
-    training_filename  = os.path.join(save_dir, 'emplid_crs_major_strm_gt10_2000plus.csv')
     
     # Output filename for the trained course vector full model:
     model_filename   = os.path.join(save_dir, 'all_since_2000_plus_majors_veclen150_win10.model')
@@ -594,7 +738,6 @@ if __name__ == '__main__':
 #         wordvec_creator = Word2VecModelCreator(action=Action.LOAD_VECTORS, 
 #                                                actionFileName=key_vec_filename
 #                                                )
-#wordvec_creator.cross_listings_verification(cross_registered_course_filename)
 
     timestr = time.strftime("%Y-%m-%d_%H_%M_%S")
     test_results_file = os.path.join(save_dir, 'cross_reg_test_res_%s.txt' % timestr)
@@ -604,15 +747,22 @@ if __name__ == '__main__':
     # Get an instance without doing anything yet:
     
     wordvec_creator = Word2VecModelCreator(action=None)
-    sentences = wordvec_creator.create_course_sentences(training_filename, hasHeader=True)
     
-    # Try models for course siblings being the 1st, 2nd, 3rd, and 4th 
-    # most likely neighbor course: 
-    for topn in range(1,5):
-        res_objs = wordvec_creator.optimize_model(topn, 
-                                                  sentences, 
-                                                  cross_registered_course_filename, 
-                                                  hasHeader=False,
-                                                  grid_results_save_file_name=test_results_file)
+#     # Try models for course siblings being the 1st, 2nd, 3rd, and 4th 
+#     # most likely neighbor course: 
+#     for topn in range(1,5):
+#         res_objs = wordvec_creator.optimize_model(VerificationMethods.TOP_N,
+#                                                   grid_results_save_file_name=test_results_file,
+#                                                   vector_sizes = [50, 100, 150, 200, 300, 400, 500, 600],
+#                                                   window_sizes = [2, 5, 10, 15, 20, 25],
+#                                                   topn
+#                                                   )
+    res_objs = wordvec_creator.optimize_model(VerificationMethods.RANK,
+                                              grid_results_save_file_name=test_results_file,
+                                              vector_sizes = [50, 100, 150, 200, 300, 400, 500, 600],
+                                              window_sizes = [2, 5, 10, 15, 20, 25]
+                                              )
+
+
     print('Results are in %s' % test_results_file)
     
