@@ -28,12 +28,13 @@ import re
 import sys
 from threading import Timer
 import time
+from enum import Enum
 
 import matplotlib
 #matplotlib.use('TkAgg')
 matplotlib.use('Qt5Agg')
 
-from matplotlib import markers, artist
+from matplotlib import artist
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 
@@ -53,6 +54,10 @@ logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=lo
 class RestartRequest(Exception):
     def __init__(self, restart_instruction):
         super().__init__(restart_instruction)
+
+class ShowOrSave(Enum):
+    SHOW = 1
+    SAVE = 2
 
 class TSNECourseVisualizer(object):
     '''
@@ -86,7 +91,7 @@ class TSNECourseVisualizer(object):
     # File with a bulk of explict mappings from course name to acadGrp:
     course2school_map_file  = os.path.join(os.path.dirname(__file__), '../data/courseNameAcademicOrg.csv')
     course_descr_file       = os.path.join(os.path.dirname(__file__), '../data/crsNmDescriptions.csv')
-    course_vectors_file     = os.path.join(os.path.dirname(__file__), '../data/all_since2000_vec150_win10_.vectors')
+    course_vectors_file     = os.path.join(os.path.dirname(__file__), '../data/best_modelvec250_win15.vector')
     
     # Dict mapping course names to short and long descriptions:
     course_descr_dict = {}
@@ -102,6 +107,7 @@ class TSNECourseVisualizer(object):
         'AMSTUD' : 'H&S',
         'ANES' : 'MED',
         'ANTHRO' : 'H&S',
+        'ANTHSCI' : 'H&S',
         'APP' : 'H&S',        
         'ARCH'   : 'H&S',
         'ART' : 'H&S',
@@ -116,8 +122,10 @@ class TSNECourseVisualizer(object):
         'BIOPH' : 'H&S',
         'BIO' : 'H&S',
         'BIOS' : 'MED',
+        'BUSINESS' : 'GSB',
         'CAT' : 'H&S',
         'CBIO' : 'MED',
+        'CE-MS' : 'ENGR',
         'CEE' : 'ENGR',
         'CHEM' : 'H&S',
         'CHEMENG' : 'ENGR',
@@ -154,8 +162,10 @@ class TSNECourseVisualizer(object):
         'EFS'   : 'H&S',
         'EMED'    : 'MED',        
         'ENERGY' : 'EARTH',
+        'ENGL-BA' : 'H&S',
         'ENGLISH' : 'H&S',
         'ENGR' : 'ENGR',
+        'ENGR-MS' : 'ENGR',
         'ETHI' : 'H&S',
         'ENV' : 'EARTH',
         'ESF' : 'VPUE',        
@@ -172,6 +182,7 @@ class TSNECourseVisualizer(object):
         'GES' : 'H&S',
         'GLOBAL' : 'H&S',
         'GSBGEN' : 'EDUC',
+        'GYOB' : 'MED',
         'HISTORY' : 'H&S',
         'HRM' : 'GSB',
         'HRP' : 'MED',        
@@ -180,6 +191,8 @@ class TSNECourseVisualizer(object):
         'HUM' : 'H&S',
         'IBER' : 'H&S',
         'ICA' : 'H&S',
+        'IE' : 'ENGR',
+        'IE-MS' : 'ENGR',
         'IIS' : 'H&S',        
         'IHUM' : 'H&S',        
         'ILAC' : 'H&S',
@@ -205,7 +218,8 @@ class TSNECourseVisualizer(object):
         'MED' : 'H&S',
         'MGTECON' : 'GSB',
         'MI' : 'MED',
-        'MLA' : 'CSP',
+        'MLA' : 'OTHERS',
+        'MPHA': 'MED',
         'MS&E' : 'ENGR',
         'MTL' : 'H&S',
         'MUSIC' : 'H&S',        
@@ -232,6 +246,7 @@ class TSNECourseVisualizer(object):
         'PHYSICS' : 'H&S',
         'POLE'  : 'GSB',
         'POLISC' : 'H&S',
+        'POLSC-BA' : 'H&S',
         'PORT' : 'H&S',        
         'PSY' : 'H&S',
         'PUB' : 'H&S',        
@@ -254,12 +269,13 @@ class TSNECourseVisualizer(object):
         'SOMGEN' : 'MED',        
         'SPAN' : 'H&S',        
         'SPECLAN' : 'H&S',
-        'SPEC' : 'VPSA',
+        'SPEC' : 'OTHERS',
         'STATS' : 'H&S',
         'STEMREM' : 'MED',        
         'STRA' : 'GSB',
         'STS' : 'H&S',
         'SUST' : 'EARTH',
+        'SYMBSYS' :  'H&S',      
         'SYMSYS' :  'H&S',      
         'SURG' : 'MED',
         'TAPS' : 'H&S',
@@ -268,7 +284,7 @@ class TSNECourseVisualizer(object):
         'URBANST' : 'H&S',
         'UAR' : 'VPUE',
         'UROL'  : 'MED',
-        'VPTL' : 'VPTL',
+        'VPTL' : 'OTHERS',
         'WELLNESS' : 'H&S',
         }    
  
@@ -278,7 +294,7 @@ class TSNECourseVisualizer(object):
     # categorical colors. Use one color to lump together acad groups
     # we are less interested in to help unclutter the scatterplot:
     
-    LUMP_COLOR = colors['black'].hex_format()
+    LUMP_COLOR = colors['poisongreen'].hex_format()
     course_color_dict   = OrderedDict(
         [
             ('ENGR' ,  colors['blue'].hex_format()),
@@ -290,10 +306,11 @@ class TSNECourseVisualizer(object):
             ('EDUC' ,  colors['bisque1'].hex_format()),   # Light brownish
             ('VPUE' ,  colors['cyan2'].hex_format()),
             ('LAW'  ,  colors['darkgray'].hex_format()),
-            ('ATH'  ,  LUMP_COLOR), # 'Others'
-            ('VPSA' ,  LUMP_COLOR), # 'Others'
-            ('VPTL' ,  LUMP_COLOR), # 'Others'
-            ('CSP'  ,  LUMP_COLOR)  # 'Others'
+            ('ATH'  ,  colors['black'].hex_format()),
+            ('OTHERS' ,  LUMP_COLOR), # VPSA/VPTL/CSP
+            ('VPSA',  LUMP_COLOR), # OTHERS
+            ('VPTL',  LUMP_COLOR), # OTHERS
+            ('CSP' ,  LUMP_COLOR)  # OTHERS
         ]
     ) 
     
@@ -305,7 +322,10 @@ class TSNECourseVisualizer(object):
                  perplexity=None,
                  fittedModelFileName=None,
                  draft_mode=None,
-                 active_acad_grps=None
+                 active_acad_grps=None,
+                 show_save=ShowOrSave.SHOW,
+                 save_filename=None,
+                 called_from_main=True
                  ):
         '''
         
@@ -331,6 +351,16 @@ class TSNECourseVisualizer(object):
         @param active_acad_grps: academic groups that should be included in computations:
             ENGR, VPUE, etc.
         @type active_acad_grps: [str]
+        @param show_save: whether to show the final figure on the screen,
+            or create it in memory, and save to to save_filename.
+        @type show_save: ShowOrSave
+        @param save_filename: only relevant if show_save == ShowOrSave.SAVE
+        @type save_filename: str
+        @param called_from_main: Should be set to True (the default), if this
+            instances is to be used in __main__. If so, the program will exit
+            once the requested figures has been created, and shown or saved.
+            If False, returns to caller.
+        @type called_from_main: bool
         '''
     
         self.debug = True
@@ -391,12 +421,17 @@ class TSNECourseVisualizer(object):
         self.analyst = CourseSimAnalytics(TSNECourseVisualizer.course_vectors_file)
               
         self.timer = None
-        self.init_new_plot(fittedModelFileName=fittedModelFileName)
-        if self.debug:
-            print("Exiting __init__ back to __main__")
-        sys.exit(0)      
+        self.init_new_plot(fittedModelFileName=fittedModelFileName,
+                           show_save=show_save,
+                           save_filename=save_filename)
+        if called_from_main:
+            if self.debug:
+                print("Exiting __init__ back to __main__")
+            sys.exit(0)      
         
-    def init_new_plot(self, fittedModelFileName=None):
+    def init_new_plot(self, fittedModelFileName=None, 
+                      show_save=ShowOrSave.SHOW, 
+                      save_filename=None):
         
         # No text in the course_name list yet:
         self.course_names_text_artist = None
@@ -432,10 +467,12 @@ class TSNECourseVisualizer(object):
         self.send_to_main(Message('ready'))        
         self.send_status_to_main()
         
-        plt.show(block=True)
-        if self.debug:
-            print("Plot show has unblocked.")
-        sys.exit(0)
+        if show_save == ShowOrSave.SHOW:
+            plt.show(block=True)
+            if self.debug:
+                print("Plot show has unblocked.")
+        elif show_save == ShowOrSave.SAVE:
+            self.save_image(save_filename)
 
     # -------------------------------------------  Communication With Control Process if Used -----------
 
@@ -747,6 +784,11 @@ class TSNECourseVisualizer(object):
         for i in range(len(x)):
             try:
                 course_name = labels_course_names[i]
+                # If the course doesn't have an entry in the
+                # color_map, it's a weird, one-off or unusual
+                # course we filtered out earlier:
+                if self.color_map.get(course_name, None) is None:
+                    continue
             except IndexError:
                 logWarn("Ran out of course names at i=%s" % i)
                 continue
@@ -762,14 +804,15 @@ class TSNECourseVisualizer(object):
             if acad_group not in TSNECourseVisualizer.active_acad_grps:
                 continue
             
-            # Give H&S a different shape to make overlaps 
-            # with other marks visible:
+            # Make H&S smaller, b/c there are so many of them that
+            # they overwhelm the images:
             course_name = labels_course_names[i]
             dot_artist = self.ax_tsne.scatter(x[i],y[i],
                                       c=self.color_map[course_name],
                                       picker=1, # Was 5
                                       label=labels_course_names[i],
-                                      marker=markers.CARETDOWN if acad_group == 'H&S' else 'o'
+                                      marker='o',
+                                      s = 10 if acad_group == 'H&S' else 20 # s is markersize
                                       )
             # Add this point's coords to our list. The offsets are 
             # a list of this scatterplot's points. But there is only 
@@ -1340,6 +1383,35 @@ class TSNECourseVisualizer(object):
             # One course name shows as '\N'; ignore it:
             if course_name == '\\N':
                 continue
+            # Another one is 'GR-SV' and some other: don't know what those are:
+            hopeful = True
+            for hopeless_course_name_root in ['GR-SV', 'UGNM-SV', 'CASA', 
+                                              'GR-NDO', 'UGNM-GNM','INSST-IHN'
+                                              ]:
+                # Yes, we unnecessarily go through all, but I'm tired:
+                if course_name.startswith(hopeless_course_name_root):
+                    hopeful = False
+                    
+            if  course_name.endswith('-AUD') or\
+                course_name.endswith('-BA') or\
+                course_name.endswith('-BAH') or\
+                course_name.endswith('-BAS') or\
+                course_name.endswith('-BS') or\
+                course_name.endswith('-BSH') or\
+                course_name.endswith('-MA') or\
+                course_name.endswith('-MS') or\
+                course_name.endswith('-PHD') or\
+                course_name.endswith('-PD') or\
+                course_name.endswith('-NHSA') or\
+                course_name.endswith('-HSV') or\
+                course_name.endswith('-IHN') or\
+                course_name.endswith('-NM') or\
+                course_name.endswith('-VR') or\
+                course_name.startswith('PETENG') or\
+                course_name.startswith('WCT'):
+                hopeful = False
+            if not hopeful:
+                continue
             try:
                 # First try the explicit course-->acadGrp map:
                 school = TSNECourseVisualizer.course_school_dict[course_name]
@@ -1353,7 +1425,9 @@ class TSNECourseVisualizer(object):
                 # Got the academic group; get a color assignment:
                 color_map[course_name] = TSNECourseVisualizer.course_color_dict[school]
             except KeyError:
-                raise ValueError("Don't have color assignment for course/acadGrp %s/%s." % (course_name, school))
+                # These failures are one-off, or otherwise strange courses:
+                logErr("Don't have color assignment for course/acadGrp %s/%s." % (course_name, school))
+                continue
         return color_map
 
     # --------------------------------------- Lookup Methods -------------
@@ -1650,6 +1724,15 @@ class TSNECourseVisualizer(object):
     #----------------
     
     def save(self, filename=None):
+        '''
+        Save the data structures that allow future 
+        resurrection of the entire model. This is 
+        different from the save_image() method, which
+        just saves an image of the plot as a png.
+        
+        @param filename:
+        @type filename:
+        '''
         if filename is None:
             filename = self.get_tsne_file_name()
             
@@ -1675,6 +1758,16 @@ class TSNECourseVisualizer(object):
     #----------------
         
     def restore(self, filename, restart=False):
+        '''
+        Recover an entire model, and plot the
+        corresponding figure. 
+        
+        @param filename:
+        @type filename:
+        @param restart: if True, restart the plot with the restored
+            data structures in place. If false, return the vectors.
+        @type restart: boolean
+        '''
         viz_file = open(filename, 'rb')
         (self.all_used_course_names,
          self.used_acad_grps,   # Groups found from courses we actually used
@@ -1692,6 +1785,20 @@ class TSNECourseVisualizer(object):
             self.restart(self.create_viz_init_dict(filename))
         else:
             return self.fitted_vectors 
+        
+    #--------------------------
+    # save_image 
+    #----------------
+
+    def save_image(self, filename):
+        '''
+        Save the plot itself as a png.
+        
+        @param filename: full path to file
+        @type filename: str
+        '''
+        self.ax_tsne.get_figure().savefig(filename)
+        
         
     #--------------------------
     # create_viz_init_dict
@@ -2100,7 +2207,7 @@ class CoursePoints(dict):
 if __name__ == '__main__':
     vector_creator = CourseVectorsCreator()
     data_dir = os.path.join(os.path.dirname(__file__), '../data/')
-    vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
+    vector_creator.load_word2vec_model(os.path.join(data_dir, 'best_modelvec250_win15.model'))
     visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
                                       in_queue=None, 
                                       out_queue=None, 

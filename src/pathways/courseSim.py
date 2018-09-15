@@ -43,7 +43,7 @@ class TsneCourseExplorer(object):
         control_surface_process.start()
 
         self.vector_creator = CourseVectorsCreator() 
-        self.vector_creator.load_word2vec_model(os.path.join(data_dir, 'course2vecModelWin10.model'))
+        self.vector_creator.load_word2vec_model(os.path.join(data_dir, 'best_modelvec250_win15.model'))
  
         # Start in draft mode for speedy viz appearance:
         # (standalone <== False is added in the start_tsne_process()

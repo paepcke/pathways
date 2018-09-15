@@ -18,7 +18,6 @@ from PySide2.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox, QFi
 
 from pathways.common_classes import Message
 from PyQt5.Qt import QMessageBox
-from docutils.statemachine import State
 
 class ControlSurface(object):
     '''
@@ -47,7 +46,7 @@ class ControlSurface(object):
         
         self.chkBox_names_acad_groups = ['EngrChk', 'GsbChk', 'HandSChk', 'MedChk', 
                             'UgChk', 'EarthChk', 'EducChk', 'VpueChk',
-                            'LawChk', 'OthersChk'
+                            'LawChk', 'AthleticsChk', 'OthersChk'
                             ]
         self.chkBox_name_to_acac_grp = {
             'EngrChk': 'ENGR', 
@@ -58,7 +57,8 @@ class ControlSurface(object):
             'EarthChk': 'EARTH', 
             'EducChk': 'EDUC', 
             'VpueChk': 'VPUE',
-            'LawChk': 'LAW', 
+            'LawChk': 'LAW',
+            'AthleticsChk': 'ATH',
             'OthersChk': 'OTHERS'
             }
 

@@ -1,0 +1,5 @@
+*.pickle filter=lfs diff=lfs merge=lfs -text
+*.csv filter=lfs diff=lfs merge=lfs -text
+*.sqlite filter=lfs diff=lfs merge=lfs -text
+data/Word2vec/emplid_crs_major_strm_gt10_2000plus.csv filter=lfs diff=lfs merge=lfs -text
+data/Word2vec/cross_registered_courses.csv filter=lfs diff=lfs merge=lfs -text
