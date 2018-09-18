@@ -1775,8 +1775,15 @@ class TSNECourseVisualizer(object):
          TSNECourseVisualizer.perplexity,
          TSNECourseVisualizer.draft_mode,
          self.figure,
-         self.course_points,
+         self.course_points,  # {(x,y) : dot_obj}
          self.fitted_vectors) = pickle.load(viz_file)
+         
+        # We don't save self.course_xy; it is the reverse lookup
+        # of self.course_points, except that the key needs to be
+        # not a dot_obj, but a coursename:
+        
+        for dot_coords, dot_obj in self.course_points.items():
+            self.course_xy[dot_obj.get_label()] = dot_coords
          
         # Get the scatter plot; it's the only subplot,
         # therefore the ',0':
