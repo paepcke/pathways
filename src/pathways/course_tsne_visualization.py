@@ -712,11 +712,9 @@ class TSNECourseVisualizer(object):
                                                          figsize=(15,10)
                                                          ) 
         self.prepare_course_list_panel()
-        # If only need to create the scatter points if we did not restore() above:
+        # Only need to create the scatter points if we did not restore() above:
         if fittedModelFileName is None:
             scatter_plot = self.add_course_scatter_points(x, y, labels_course_names)
-            # Get all the course names we actually used above (could be draft mode):
-            self.all_used_course_names = [point.get_label() for point in self.ax_tsne.get_children() if point.get_label() != '']
         
             # Get the set of academic groups represented by these used courses.
             # That's different from the TSNECourseVisualizer.active_acad_grps list. That one
@@ -803,23 +801,46 @@ class TSNECourseVisualizer(object):
             # skip it:
             if acad_group not in TSNECourseVisualizer.active_acad_grps:
                 continue
-            
-            # Make H&S smaller, b/c there are so many of them that
-            # they overwhelm the images:
+
             course_name = labels_course_names[i]
-            dot_artist = self.ax_tsne.scatter(x[i],y[i],
-                                      c=self.color_map[course_name],
-                                      picker=1, # Was 5
-                                      label=labels_course_names[i],
-                                      marker='o',
-                                      s = 10 if acad_group == 'H&S' else 20 # s is markersize
-                                      )
+            # Check whether a dot already exists in this
+            # spot. If so, make this new artist a pseudo artist:
+            
+            # Make a hashable key from the coords:
+            xy_str = str(x[i]) + str(y[i])
+            whats_there = dot_exists_at.get(xy_str, None)
+            
+            # Decide whether to show or hide the artist, depending
+            # on whether we allow overplotting or not: overplotting
+            # OK for mix of H&S and anything else. No others are
+            # overplotted:
+            
+            if whats_there is not None:
+            *****
+            
+            
+            if self.course_xy.get((x,y), None) is not None:
+                dot_artist = PseudoDotArtist(course_name, (x,y))
+            else:
+                # Make H&S smaller, b/c there are so many of them that
+                # they overwhelm the images:
+    
+                dot_artist = self.ax_tsne.scatter(x[i],y[i],
+                                          c=self.color_map[course_name],
+                                          picker=1, # Was 5
+                                          label=labels_course_names[i],
+                                          marker='o',
+                                          s = 10 if acad_group == 'H&S' else 20 # s is markersize
+                                          )
             # Add this point's coords to our list. The offsets are 
             # a list of this scatterplot's points. But there is only 
             # a single one, since we add one by one:
             
             self.course_points[dot_artist.get_offsets()[0]] = dot_artist
             self.course_xy[course_name] = [x[i], y[i]]
+            # Keep track of course names we actually used above (could be draft mode):
+            self.all_used_course_names.append(course_name)
+            
             
             # Check whether a dot already exists in this
             # spot. If so, make this new artist invisible.
@@ -2176,6 +2197,27 @@ class CoursePoints(dict):
         # method returns an iterator with just the non-masked array/list members:
         scatter_artists = [self[coord_pair] for coord_pair in itertools.compress(coord_pairs, contained_pair_booleans)] 
         return scatter_artists
+
+    # ------------------------------------------------------- PseudoDotArtist Class ----------------------
+    
+class PseudoDotArtist(object):
+    '''
+    A featherlight stand-in for a matplotlib scatter plot
+    dot. I.e. for a PathCollection instance. Whenever a dot
+    would be covering an already existing dot, we create an
+    instance of this class. This subterfuge helps speed up 
+    redraw.
+    '''
+    
+    def __init__(self, course_name, coords=None):
+        self.course_name = course_name
+        self.coords = coords
+        
+    def get_label(self):
+        return self.course_name
+    
+        
+        
 
 #******************************************************* Likely not needed.   
 # def start_viz(vector_creator,  #@UnusedVariable
