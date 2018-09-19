@@ -31,6 +31,7 @@ import time
 from enum import Enum
 
 import matplotlib
+from pathways.Old.tsne_viz_process import TsneViz
 #matplotlib.use('TkAgg')
 matplotlib.use('Qt5Agg')
 
@@ -67,6 +68,13 @@ class TSNECourseVisualizer(object):
     # Set to 'newplot' when __main__ should exit, rather than
     # creating another instance for a new plot
     status = 'running'
+
+    # Number of pixels around a mouse event
+    # location to consider as part of the area
+    # that is intended to be indicated by a 
+    # user's mouse cursor placement:
+    
+    PICK_RADIUS = 1
     
     # Where to put saved displays:
     DEFAULT_CACHE_FILE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../cache'))
@@ -413,7 +421,11 @@ class TSNECourseVisualizer(object):
         # Regex to separate SUBJECT from CATALOG_NBR in a course name:
         self.crse_subject_re = re.compile(r'([^0-9]*).*$')
         
-        self.course_name_list = self.create_course_name_list(self.course_vectors_model)                
+        self.course_name_list = self.create_course_name_list(self.course_vectors_model)     
+        # Course names that have actually been plotted (as
+        # opposed to *all* course names:
+        self.all_used_course_names = []
+                   
         # Map each course to the Tableau categorical color of its school (academicGroup):
         self.color_map = self.get_acad_grp_to_color_map(self.course_name_list)
         
@@ -816,10 +828,6 @@ class TSNECourseVisualizer(object):
             # overplotted:
             
             if whats_there is not None:
-            *****
-            
-            
-            if self.course_xy.get((x,y), None) is not None:
                 dot_artist = PseudoDotArtist(course_name, (x,y))
             else:
                 # Make H&S smaller, b/c there are so many of them that
@@ -827,7 +835,7 @@ class TSNECourseVisualizer(object):
     
                 dot_artist = self.ax_tsne.scatter(x[i],y[i],
                                           c=self.color_map[course_name],
-                                          picker=1, # Was 5
+                                          picker=TSNECourseVisualizer.PICK_RADIUS, # Was 5
                                           label=labels_course_names[i],
                                           marker='o',
                                           s = 10 if acad_group == 'H&S' else 20 # s is markersize
@@ -840,47 +848,6 @@ class TSNECourseVisualizer(object):
             self.course_xy[course_name] = [x[i], y[i]]
             # Keep track of course names we actually used above (could be draft mode):
             self.all_used_course_names.append(course_name)
-            
-            
-            # Check whether a dot already exists in this
-            # spot. If so, make this new artist invisible.
-            
-            # Make a hashable key from the coords:
-            xy_str = str(x[i]) + str(y[i])
-            whats_there = dot_exists_at.get(xy_str, None)
-            
-            # Decide whether to show or hide the artist, depending
-            # on whether we allow overplotting or not: overplotting
-            # OK for mix of H&S and anything else. No others are
-            # overplotted:
-            
-            if whats_there is not None:
-                # At least one dot already exists in this spot:
-                if whats_there == 'H&S+':
-                    # Case1: an H&S marker and another acad group's
-                    #        marker are already there: don't draw
-                    #        anything else:
-                    dot_artist.set_visible(False)
-                elif acad_group == 'H&S' and not whats_there.startswith('H&S'):
-                    # Case2: new group is H&S, and something other than
-                    #        H&S is already plotted.
-                    # We overplot the new H&S onto the existing dot,
-                    # and remember that we now have H&S plus some other
-                    # acad group dot; no other marker will go here 
-                    # from now on:
-                    dot_exists_at[xy_str] = 'H&S+'
-                elif whats_there == 'H&S' and acad_group != 'H&S':
-                    # Case3: one H&S mark is already there, and new acad
-                    #        group is other than H&S. I.e. reverse of
-                    #        above, but separate branch for clarity:  
-                    dot_exists_at[xy_str] = 'H&S+'
-                else:
-                    # Case4: whats already plotted is not H&S, and new
-                    #        acad group is not H&S either: suppress overplot:
-                    dot_artist.set_visible(False)
-            else:
-                # Now there's a mark at the current spot:
-                dot_exists_at[xy_str] = dot_artist
             
         logInfo("Done adding course scatter points.")
         return dot_artist
@@ -2209,13 +2176,30 @@ class PseudoDotArtist(object):
     redraw.
     '''
     
-    def __init__(self, course_name, coords=None):
+    def __init__(self, course_name, coords, picker_distance=None):
         self.course_name = course_name
         self.coords = coords
+        if picker_distance is None:
+            self.picker_distance = TSNECourseVisualizer.PICK_RADIUS
+        else:
+            self.picker_distance = picker_distance
+            
+        self.x = coords[0]
+        self.y = coords[1]
+        # Compute the bounding rectangle, given by
+        # the picker variable:
         
     def get_label(self):
         return self.course_name
     
+    def contained_in(self, mouse_event):
+        x = mouse_event.xdata
+        y = mouse_event.ydata
+        is_contained = x >= self.x - self.picker_distance and \
+                       x <= self.x + self.picker_distance and \
+                       y >= self.y - self.picker_distance and \
+                       y <= self.y + self.picker_distance
+        return is_contained
         
         
 
