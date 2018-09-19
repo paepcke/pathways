@@ -15,6 +15,7 @@ NOTE: for Eclipse to find PyQt5.sip I had to:
 
 from collections import OrderedDict
 import csv
+from enum import Enum
 import functools
 import itertools
 from logging import error as logErr
@@ -28,17 +29,13 @@ import re
 import sys
 from threading import Timer
 import time
-from enum import Enum
-
-import matplotlib
-from pathways.Old.tsne_viz_process import TsneViz
-#matplotlib.use('TkAgg')
-matplotlib.use('Qt5Agg')
 
 from matplotlib import artist
+import matplotlib
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 
+from fast_dot_retrieval.fast_dot_retrieval import DotManager
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from multicoretsne import  MulticoreTSNE as TSNE
@@ -48,6 +45,13 @@ from pathways.common_classes import Message
 from pathways.course_sim_analytics import CourseSimAnalytics
 from pathways.course_vector_creation import CourseVectorsCreator
 from pathways.enrollment_plotter import EnrollmentPlotter
+
+
+#from pathways.Old.tsne_viz_process import TsneViz
+#matplotlib.use('TkAgg')
+matplotlib.use('Qt5Agg')
+
+
 
 #from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
@@ -456,6 +460,8 @@ class TSNECourseVisualizer(object):
         self.course_highlights = {}
         # No course points lassoed yet:
         self.lassoed_course_points = []
+        # No remembered dots yet:
+        self.dot_manager = None
         
         # No selection polygon vertices yet:
         self.selection_polygon = None
@@ -788,7 +794,10 @@ class TSNECourseVisualizer(object):
         self.xys = []
         dot_artist = None
         # Fast retrieval of artists by coords:
-        dot_exists_at = {}
+        
+        # Create a manager for the scatter dots we are 
+        # about to create:
+        self.dot_manager = DotManager((min(x), min(y)), (max(x), max(y)))
         
         logInfo("Adding course scatter points...")
         for i in range(len(x)):
@@ -818,17 +827,8 @@ class TSNECourseVisualizer(object):
             # Check whether a dot already exists in this
             # spot. If so, make this new artist a pseudo artist:
             
-            # Make a hashable key from the coords:
-            xy_str = str(x[i]) + str(y[i])
-            whats_there = dot_exists_at.get(xy_str, None)
-            
-            # Decide whether to show or hide the artist, depending
-            # on whether we allow overplotting or not: overplotting
-            # OK for mix of H&S and anything else. No others are
-            # overplotted:
-            
-            if whats_there is not None:
-                dot_artist = PseudoDotArtist(course_name, (x,y))
+            if self.dot_manager.get_dots(x[i],y[i]) is not None:
+                dot_artist = PseudoDotArtist(course_name, (x[i],y[i]))
             else:
                 # Make H&S smaller, b/c there are so many of them that
                 # they overwhelm the images:
@@ -844,7 +844,16 @@ class TSNECourseVisualizer(object):
             # a list of this scatterplot's points. But there is only 
             # a single one, since we add one by one:
             
-            self.course_points[dot_artist.get_offsets()[0]] = dot_artist
+            coords = dot_artist.get_offsets()[0]
+            self.course_points[coords] = dot_artist
+            
+            # The course_points class existed first, and deals with
+            # containment. Just for getting either real or pseudo 
+            # artists quickly by coordinates. The two should be 
+            # combined, but are optimized for somewhat different goals:
+            
+            self.dot_manager.add_dot(coords[0], coords[1], dot_artist)
+            
             self.course_xy[course_name] = [x[i], y[i]]
             # Keep track of course names we actually used above (could be draft mode):
             self.all_used_course_names.append(course_name)
@@ -2201,7 +2210,11 @@ class PseudoDotArtist(object):
                        y <= self.y + self.picker_distance
         return is_contained
         
-        
+    def get_offsets(self):
+        '''
+        Like real artists: return a list of coordinate 2-tuples.
+        '''
+        return [self.coords]
 
 #******************************************************* Likely not needed.   
 # def start_viz(vector_creator,  #@UnusedVariable
