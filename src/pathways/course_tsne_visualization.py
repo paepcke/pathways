@@ -32,6 +32,11 @@ import time
 
 from matplotlib import artist
 import matplotlib
+
+# Backend spec must be before pyplot import!
+#matplotlib.use('TkAgg')
+matplotlib.use('Qt5Agg')
+
 from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 
@@ -48,8 +53,6 @@ from pathways.enrollment_plotter import EnrollmentPlotter
 
 
 #from pathways.Old.tsne_viz_process import TsneViz
-#matplotlib.use('TkAgg')
-matplotlib.use('Qt5Agg')
 
 
 
@@ -672,6 +675,10 @@ class TSNECourseVisualizer(object):
         labels_course_names = []
         tokens_vectors      = []
         
+        #**********
+        self.num_calls = 0
+        #**********
+        
         for course_name in self.course_vectors_model.wv.vocab:
             tokens_vectors.append(self.course_vectors_model.wv.__getitem__(course_name))
             labels_course_names.append(course_name)
@@ -746,7 +753,6 @@ class TSNECourseVisualizer(object):
             self.update_figure_title()
         
             logInfo("Adding legend...")
-            self.add_legend(scatter_plot)
             self.add_legend(self.ax_tsne)
             logInfo("Done adding legend.")
     
@@ -797,7 +803,9 @@ class TSNECourseVisualizer(object):
         
         # Create a manager for the scatter dots we are 
         # about to create:
-        self.dot_manager = DotManager((min(x), min(y)), (max(x), max(y)))
+        self.dot_manager = DotManager((min(x), min(y)), 
+                                      (max(x), max(y)),
+                                      TSNECourseVisualizer.PICK_RADIUS)
         
         logInfo("Adding course scatter points...")
         for i in range(len(x)):
@@ -851,6 +859,10 @@ class TSNECourseVisualizer(object):
             # containment. Just for getting either real or pseudo 
             # artists quickly by coordinates. The two should be 
             # combined, but are optimized for somewhat different goals:
+            
+            #******************
+            self.num_calls += 1
+            #******************
             
             self.dot_manager.add_dot(coords[0], coords[1], dot_artist)
             
@@ -908,28 +920,30 @@ class TSNECourseVisualizer(object):
     # update_annot 
     #----------------
 
-    def update_annot(self, mark_ind, annot):
+    def update_annot(self, dot_artist, annot):
         '''
         Update the tooltip surface with the course name
         
-        @param mark_ind: list of point coordinates
-        @type mark_ind: [[float,float]]
+        @param dot_artist: list of point coordinates
+        @type dot_artist: [[float,float]]
         @param annot: tooltip surface
         @type annot: ?
         '''
-        plot_element = self.ax_tsne.get_children()[mark_ind]
-        pos = plot_element.get_offsets()
-        # Position is like array([[9.90404368, 2.215768  ]]). So
+        pos = dot_artist.get_offsets()
+        #**********
+        self.dot_manager.stats()
+        #**********
+        # Position is like array([(9.90404368, 2.215768)]). So
         # grab first pair:
         annot.xy = pos[0]
-        course_name   = plot_element.get_label()
+        course_name   = dot_artist.get_label()
         acad_grp_name = self.group_name_from_course_name(course_name)
         if acad_grp_name is None:
             # Ignore the one course named '\\N':
             return
         label_text    = course_name + '/' + acad_grp_name
         annot.set_text(label_text)
-        #dot_color = plot_element.get_facecolor()[0]
+        #dot_color = dot_artist.get_facecolor()[0]
         #annot.get_bbox_patch().set_facecolor(dot_color)
         annot.get_bbox_patch().set_facecolor('#00000000') # Black
         
@@ -1105,24 +1119,16 @@ class TSNECourseVisualizer(object):
         fig = self.ax_tsne.get_figure()
         
         if event.inaxes == self.ax_tsne:
-            try:
-                # plot_element.contains(event) returns a two-tuple: (False, {'ind': array([], dtype=int32)})
-                # Look for the first dot where contains is True:
-                mark_ind = next(i for i,plot_element in enumerate(self.ax_tsne.get_children()) 
-                                if plot_element.contains(event)[0] and isinstance(plot_element, tsne_dot_class) 
-                                )
-            except StopIteration:
-                mark_ind = None
-            if mark_ind is not None:
-                self.update_annot(mark_ind, annot)
+            dot_artists = self.dot_manager.get_dots(event.xdata, event.ydata)
+            first_artist = None if dot_artists is None else dot_artists[0]
+            if first_artist is not None:
+                self.update_annot(first_artist, annot)
                 annot.set_visible(True)
                 fig.canvas.draw_idle()
             else:
                 if vis:
                     annot.set_visible(False)
                     fig.canvas.draw_idle()
-
-
 
     #--------------------------
     # onpick 
@@ -1243,9 +1249,12 @@ class TSNECourseVisualizer(object):
     
     def exit_lassoing_state(self):
         # Erase on screen:
-        self.selection_polygon.erase()
-        # Allow GC:
-        self.selection_polygon = None        
+        # If user hasn't earlier erased the lasso polygon
+        # by clicking on empty space, erase it now:
+        if self.selection_polygon is not None:
+            self.selection_polygon.erase()
+            # Allow GC:
+            self.selection_polygon = None        
                     
     #--------------------------
     # poly_lasso_was_closed
@@ -1423,7 +1432,7 @@ class TSNECourseVisualizer(object):
                 color_map[course_name] = TSNECourseVisualizer.course_color_dict[school]
             except KeyError:
                 # These failures are one-off, or otherwise strange courses:
-                logErr("Don't have color assignment for course/acadGrp %s/%s." % (course_name, school))
+                logWarn("Don't have color assignment for course/acadGrp %s/%s." % (course_name, school))
                 continue
         return color_map
 
@@ -1746,6 +1755,7 @@ class TSNECourseVisualizer(object):
                              TSNECourseVisualizer.draft_mode,
                              self.figure,
                              self.course_points,
+                             self.dot_manager,
                              self.fitted_vectors]
         pickle.dump(important_structs, open(filename, 'wb'))
         return filename
@@ -1773,6 +1783,7 @@ class TSNECourseVisualizer(object):
          TSNECourseVisualizer.draft_mode,
          self.figure,
          self.course_points,  # {(x,y) : dot_obj}
+         self.dot_manager,
          self.fitted_vectors) = pickle.load(viz_file)
          
         # We don't save self.course_xy; it is the reverse lookup

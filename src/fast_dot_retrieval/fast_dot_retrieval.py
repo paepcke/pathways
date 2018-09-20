@@ -4,6 +4,7 @@ Created on Sep 19, 2018
 @author: paepcke
 '''
 
+from matplotlib.collections import PathCollection
 from math import floor, ceil
 
 class DotManager(object):
@@ -22,34 +23,98 @@ class DotManager(object):
     # __init__
     #------------------
 
-    def __init__(self, lower_left, upper_right, grid_edge_len=10):
+    def __init__(self, lower_left, upper_right, picker_radius, grid_edge_len=10):
         '''
         Constructor
         '''
+        
+        #**********
+        self.num_calls = 0
+        #**********
+        
+        self.picker_radius = picker_radius
+        
         x_min = lower_left[0]
         x_max = upper_right[0]
         y_min = lower_left[1]
         y_max = upper_right[1]
         
+        # We'll keep track of lowest/highest
+        # values of x and y as we add points.
+        # That's to enable initial checks when
+        # coordinate is given in get_dots() to 
+        # see whether there could possibly be a
+        # dot:
+        
+        self.x_min_observed = self.x_max_observed = None
+        self.y_min_observed = self.y_max_observed = None
+        
+        
+        # Create the grid of cell-size range/numGrids
+        # for x and y:
         x_range = x_max - x_min
         y_range = y_max - y_min
         x_steps = ceil(x_range/float(grid_edge_len)) 
         y_steps = ceil(y_range/float(grid_edge_len)) 
         
+        # Lists of data-space coordinates that are the 
+        # cell boundaries for x and y respectively
         self.x_partitions = [x for x in range(floor(x_min), ceil(x_max)+x_steps+1, x_steps)]
         self.y_partitions = [y for y in range(floor(y_min), ceil(y_max)+y_steps+1, y_steps)]
         
         num_rows = len(self.y_partitions)
         num_cols =  len(self.x_partitions)
-        self.dot_dict_matrix = [[{}] * (num_cols+1) for _i in range(num_rows+1)]
+        
+        # Create the 2D array with an empty dict in each cell.
+        # Any of the pythonic ways surprise you by having cells
+        # unexpectedly share data structures within them. So don't
+        # use this construct:
+        #    self.dot_dict_matrix = [[{}] * (num_cols+1) for _i in range(num_rows+1)]
+        # Instead do it the pedestrian way:
+        
+        self.dot_dict_matrix = []
+        for _rows in range(num_rows+1):
+            columns = []
+            for _cols in range(num_cols+1):
+                columns.append({})
+            self.dot_dict_matrix.append(columns)
+
 
     #--------------------------------
     # get_dots 
     #------------------
         
     def get_dots(self, x, y):
+        '''
+        Return a list of dot artists that already exist 
+        at x,y. Return None if no artists have been added
+        in that area yet. The match is fuzzy in that any
+        dot added in the area defined by x+- picker_radius
+        and y+- picker_radius qualify as 'being at x/y'.
         
-        # Find x/y-positions in dot matrix:
+        A rendered artist is guaranteed to be first in
+        the list.
+        
+        @param x: abscissa in data space
+        @type x: float
+        @param y: ordinal in data space
+        @type y: float
+        @return: list of dot artist objects or None
+        @rtype: [{PathCollection | PseudoArtist}]
+        '''
+        
+        # Find x/y-positions in dot matrix
+        # Is the requested coord outside all the points
+        # that have been added so far?
+        
+        # If no points were added so far, there surely
+        # is nothing at the given coords, or anywhere else:
+        if self.x_min_observed is None:
+            return None
+        
+        if x < self.x_min_observed or x > self.x_max_observed or\
+           y < self.y_min_observed or y > self.y_max_observed:
+            return None
         
         x_in_dot_matrix, y_in_dot_matrix = self.find_dot_matrix_indices(x, y)
         try:
@@ -57,23 +122,90 @@ class DotManager(object):
         except IndexError as e:
             print('Error: %s' % repr(e))
             
-        return dot_dict.get((x,y), None)
+        for dot_x,dot_y in dot_dict.keys():
+            low_x_bound  = dot_x - self.picker_radius
+            high_x_bound = dot_x + self.picker_radius
+            low_y_bound  = dot_y - self.picker_radius
+            high_y_bound = dot_y + self.picker_radius
+            if (low_x_bound <= x) and (high_x_bound >= x) and\
+               (low_y_bound <= y) and (high_y_bound >= y):
+                return dot_dict[(dot_x, dot_y)]
+        return None
     
     #--------------------------------
     # add_dot 
     #------------------
       
-    def add_dot(self, x, y, dot_obj):
+    def add_dot(self, x, y, dot_artist_obj):
+        '''
+        Add one dot to the dot matrix. Updates the
+        lowest/highest x and y coordinates of all added
+        dots. 
+        
+        Dot artists are guaranteed to stay in the order
+        in which they were added.
+        
+        @param x: abscissa in data space
+        @type x: float
+        @param y: ordinal in data space
+        @type y: float
+        @param dot_artist_obj: the artist to add
+        @type dot_artist_obj: {PathCollection | PseudoArtist}
+        '''
+        
+        #******************
+        self.num_calls += 1
+        if self.num_calls >= 491:
+            print('*************** num_calls: %s' % self.num_calls)
+        #******************
+        
         
         # Find x/y-positions in dot matrix:
         
         x_in_dot_matrix, y_in_dot_matrix = self.find_dot_matrix_indices(x, y)
         dot_dict = self.dot_dict_matrix[x_in_dot_matrix][y_in_dot_matrix]
         if dot_dict.get((x,y), None) is None:
-            dot_dict[(x,y)] = [dot_obj]
+            dot_dict[(x,y)] = [dot_artist_obj]
         else:
-            dot_dict[(x,y)].append(dot_obj)
+            dot_dict[(x,y)].append(dot_artist_obj)
             
+        # Update the lowest/highest seen dot coordinate
+        # for x/y:
+        self.x_min_observed = x if self.x_min_observed is None else min(self.x_min_observed, x)
+        self.x_max_observed = x if self.x_max_observed is None else max(self.x_max_observed, x)
+            
+        self.y_min_observed = y if self.y_min_observed is None else min(self.y_min_observed, y)
+        self.y_max_observed = y if self.y_max_observed is None else max(self.y_max_observed, y)
+        
+    #--------------------------------
+    # stats 
+    #------------------
+    
+    def stats(self):
+        '''
+        Returns a 2-tuple: number of dots actually rendered
+        by matplotlib, and the number of pseudo artists.
+        
+        @return: number of rendered and non-rendered artists so far
+        @rtype: (int, int)
+        '''
+        
+        # Flatten the matrix 2d array into 1d:
+        # (Not very readable, but oh so pythonic):
+        dicts_array = [grid_col for rows in self.dot_dict_matrix for grid_col in rows]
+        
+        num_rendered_artists = 0 
+        num_pseudo_artists = 0
+        for grid_dict in dicts_array:
+            for artists_in_one_spot in grid_dict.values():
+                for artist in artists_in_one_spot:
+                    if isinstance(artist, PathCollection):
+                        num_rendered_artists += 1
+                    else:
+                        num_pseudo_artists += 1
+        return (num_rendered_artists, num_pseudo_artists)
+        
+        
     #--------------------------------
     # find_dot_matrix_indices 
     #------------------
