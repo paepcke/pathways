@@ -675,10 +675,6 @@ class TSNECourseVisualizer(object):
         labels_course_names = []
         tokens_vectors      = []
         
-        #**********
-        self.num_calls = 0
-        #**********
-        
         for course_name in self.course_vectors_model.wv.vocab:
             tokens_vectors.append(self.course_vectors_model.wv.__getitem__(course_name))
             labels_course_names.append(course_name)
@@ -860,10 +856,6 @@ class TSNECourseVisualizer(object):
             # artists quickly by coordinates. The two should be 
             # combined, but are optimized for somewhat different goals:
             
-            #******************
-            self.num_calls += 1
-            #******************
-            
             self.dot_manager.add_dot(coords[0], coords[1], dot_artist)
             
             self.course_xy[course_name] = [x[i], y[i]]
@@ -930,9 +922,6 @@ class TSNECourseVisualizer(object):
         @type annot: ?
         '''
         pos = dot_artist.get_offsets()
-        #**********
-        self.dot_manager.stats()
-        #**********
         # Position is like array([(9.90404368, 2.215768)]). So
         # grab first pair:
         annot.xy = pos[0]
