@@ -3,19 +3,23 @@ Created on Aug 29, 2018
 
 @author: paepcke
 '''
+import argparse
 import csv
+from enum import Enum
 import gzip
 import logging
 import os
+import sqlite3
+import sys
 import tempfile
 import time
-from enum import Enum
-
-import numpy as np
 
 import gensim
 from gensim.models import KeyedVectors
 from gensim.models import Word2Vec
+
+import numpy as np
+
 
 class Action(Enum):
     LOAD_MODEL = 0
@@ -38,13 +42,20 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     CROSS_REGISTRATION_FILENAME = 'cross_registered_courses.csv'
     
     # The enrollment data
-    TRAINING_FILENAME = 'emplid_crs_major_strm_gt10_2000plus.csv'
+    TRAINING_FILENAME  = 'emplid_crs_major_strm_gt10_2000plus.csv'
+    TRAINING_SQLITE_DB = 'enrollment_tally.sqlite'
 
     #--------------------------
     # __init__ 
     #----------------
 
-    def __init__(self, action=None, actionFileName=None, saveFileName=None, hasHeader=False):
+    def __init__(self, 
+                 action=None, 
+                 actionFileName=None, 
+                 saveFileName=None, 
+                 hasHeader=False, 
+                 low_strm=None, 
+                 high_strm=None):
         '''
         Constructor
         '''
@@ -57,7 +68,8 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         cross_registered_course_filename = os.path.join(save_dir, 
                                                         Word2VecModelCreator.CROSS_REGISTRATION_FILENAME
                                                         )
-        # The enrollment data:
+        # The enrollment data, though can be over-ridden 
+        # in actionFileName; see case statement below:
         self.training_filename  = os.path.join(save_dir, 
                                                Word2VecModelCreator.TRAINING_FILENAME
                                                )
@@ -66,7 +78,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         # courses are cross listed. Format: "course_name, evalunitid".
         self.cross_listings = self.cross_listings_from_file(cross_registered_course_filename, hasHeader=False)
         
-        self.sentences = self.create_course_sentences(self.training_filename, hasHeader=True)
+        # self.sentences = self.create_course_sentences(self.training_filename, hasHeader=True)
         
         if action is None:
             # If nothing to do, just provide the instance
@@ -83,7 +95,10 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             return
         elif action == Action.CREATE_MODEL:
             id_strm_crse_filename = actionFileName
-            self.sentences = self.create_course_sentences(id_strm_crse_filename, hasHeader=hasHeader)
+            self.sentences = self.create_course_sentences(id_strm_crse_filename,  # csv of sqlite3 filename 
+                                                          hasHeader=hasHeader, 
+                                                          low_strm=low_strm, 
+                                                          high_strm=high_strm)
             self.model = self.create_model(self.sentences)
             (self.model_filename, self.wv_filename) = self.save(saveFileName)
         elif action == Action.EVALUATE:
@@ -179,7 +194,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     # create_course_sentences 
     #----------------
 
-    def create_course_sentences(self, id_strm_crse_filename, hasHeader=False):
+    def create_course_sentences(self, id_strm_crse_filename, hasHeader=False, low_strm=None, high_strm=None):
         '''
         Given a course info file, create a list of lists that
         can be used as input sentences for word2vec. Input file
@@ -190,27 +205,66 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
 			"$2b$...Uq24","MED300A","MED-MD","MED","1014"
 			"$2b$...Ux35","SURG300A","MED-MD","MED","1012"
 			"$2b$...Urk3","PEDS300A","MED-MD","MED","1012"
+			
+		If the file has extension .sqlite it is assumed to be an
+		sqlite file with the same schema as the csv file layout.
+		In this case the hasHeader argument is ignored. Instead,
+		the low_strm and high_strm args are considered. The low_strm
+		is an optional lower bound (inclusive) of the strm(s) included.
+		And high_strm is the upper (exclusive) bound. If either is None,
+		no bound is imposed in the respective (or both) directions.  
 			            
 		Each sentences will be the concatenation of one student's 
 		course names, and their major.	            
         
         @param id_strm_crse_filename: name of file with enrollment info
         @type id_strm_crse_filename: string
+        @param hasHeader: whether or not .csv file as a column name header row.
+        @type hasHeader: bool
+        @param low_strm: lower inclusive bound of strm included.
+        @type low_strm: int
+        @param high_strm: upper exclusive bound of strm included.
+        @type high_strm: int
         @return: array of array representing the training sentences
         @rtype: [[str,str,str,...],[str,str...]...] 
         '''
-        with open(id_strm_crse_filename, 'r') as fd:
+        
+        if id_strm_crse_filename.endswith('.sqlite'):
+            try:
+                conn = sqlite3.connect(id_strm_crse_filename)
+            except Exception as e:
+                raise ValueError("Could not open Sqlite3 db '%s' (%s)" % (id_strm_crse_filename, repr(e)))
+            reader = conn.cursor()
+            where_clause = '' if low_strm is None and high_strm is None else 'WHERE '
+            if low_strm is not None:
+                where_clause += "strm >= %s" % low_strm
+                if high_strm is not None:
+                    where_clause += ' and '
+            if high_strm is not None:
+                where_clause += 'strm < %s' % high_strm
+            
+            try:    
+                reader.execute("SELECT * FROM EnrollmentTallyAllCols " + where_clause + ';')
+            except Exception as e:
+                reader.close()
+                raise ValueError("Could not query Sqlite3 db '%s' (%s)" % (id_strm_crse_filename, repr(e)))                
+        else:
+            try:
+                fd = open(id_strm_crse_filename, 'r')
+                reader = csv.reader(fd)
+            except Exception as e:
+                raise ValueError("Could not open csv file '%s' (%s)" % (id_strm_crse_filename, repr(e)))                
+        try:
             sentences = []
-            csv_reader    = csv.reader(fd)
             curr_emplid   = None
             curr_sentence = None
             
-            if hasHeader:
+            if hasHeader and not id_strm_crse_filename.endswith('.sqlite'):
                 # Ignore header in CSV:
-                next(csv_reader)
+                next(reader)
                 
             self.logInfo('Creating sentences from enrollments...')
-            for emplid, coursename, major, career, strm in csv_reader: #@UnusedVariable
+            for emplid, coursename, major, career, strm in reader: #@UnusedVariable
                 if emplid != curr_emplid:
                     # Starting a new student:
                     if curr_sentence is not None:
@@ -224,6 +278,9 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                 else:
                     # More courses for current student:
                     curr_sentence.append(coursename)
+        finally:
+            reader.close()
+            
         self.logInfo('Done creating sentences from enrollments.')
         return sentences
     
@@ -713,56 +770,93 @@ class CrossRegistrationRankResult(CrossRegistrationTestResult):
 # -------------------------------------------- Main -------------------------
 
 if __name__ == '__main__':
+
     curr_dir = os.path.dirname(__file__)
+    
+    parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]), formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('-a', '--action',
+                        type=str,
+                        choices=['create_model', 'load_model', 'load_vectors', 'save_model', 'evaluate', 'optimize_model'],
+                        help="what you want the program to do.", 
+                        default=None);
+    parser.add_argument('-f', '--file',
+                        help='fully qualified path to model/vector load file, depending on requested action',
+                        default=None);
+    parser.add_argument('-s', '--savefile',
+                        help='fully qualified path to file for saving result depending on requested action',
+                        default=None);
+    parser.add_argument('--low_strm',
+                        type=int,
+                        help='lowest integer strm (inclusive) to use during model training. Only used for create_model',
+                        default=None);
+    parser.add_argument('--high_strm',
+                        type=int,                        
+                        help='highest integer strm (exclusive) to use during model training. Only used for create_model',
+                        default=None);
+                        
+                        
+    args = parser.parse_args();
+
     save_dir = os.path.join(curr_dir, '../data/Word2vec/')
     
     # Output filename for the trained course vector full model:
-    model_filename   = os.path.join(save_dir, 'all_since_2000_plus_majors_veclen150_win10.model')
+    if args.file is None:
+        model_filename   = os.path.join(save_dir, 'all_since_2000_plus_majors_veclen150_win10.model')
+    else:
+        model_filename   = args.file
+    
+    if os.path.exists(args.savefile):
+        raise ValueError("Savefile '%s' exists; please remove it first." % args.savefile)
+    
     # Create filename in same dir as model, but w/ extension .vectors:
     file_root, _ext   = os.path.splitext(os.path.basename(model_filename))
     key_vec_filename = os.path.join(save_dir, file_root + '.vectors')
     
-    cross_registered_course_filename = os.path.join(save_dir, 'cross_registered_courses.csv') 
-    
-    wordvec_creator = None    
-    # Create a model:
-#     wordvec_creator = Word2VecModelCreator(action=Action.CREATE_MODEL, 
-#                                            actionFileName=training_filename, 
-#                                            saveFileName='allSince2000PlusMajors',
-#                                            hasHeader=True)
-#     if wordvec_creator is not None:
-#         wordvec_creator = Word2VecModelCreator(action=Action.LOAD_VECTORS, 
-#                                                actionFileName=wordvec_creator.wv_filename
-#                                                )
-#     else:
-#         wordvec_creator = Word2VecModelCreator(action=Action.LOAD_VECTORS, 
-#                                                actionFileName=key_vec_filename
-#                                                )
-
-    timestr = time.strftime("%Y-%m-%d_%H_%M_%S")
-    test_results_file = os.path.join(save_dir, 'cross_reg_test_res_%s.txt' % timestr)
-                                      
-    # Run through many vector and window sizes and see which course cross listings
-    # are best predicted: 
-    # Get an instance without doing anything yet:
-    
+    # Get an instance without doing anything yet.
+    # Might get overridden below:
     wordvec_creator = Word2VecModelCreator(action=None)
     
-#     # Try models for course siblings being the 1st, 2nd, 3rd, and 4th 
-#     # most likely neighbor course: 
-#     for topn in range(1,5):
-#         res_objs = wordvec_creator.optimize_model(VerificationMethods.TOP_N,
-#                                                   grid_results_save_file_name=test_results_file,
-#                                                   vector_sizes = [50, 100, 150, 200, 300, 400, 500, 600],
-#                                                   window_sizes = [2, 5, 10, 15, 20, 25],
-#                                                   topn
-#                                                   )
-    res_objs = wordvec_creator.optimize_model(VerificationMethods.RANK,
-                                              grid_results_save_file_name=test_results_file,
-                                              vector_sizes = [50, 100, 150, 200, 300, 400, 500, 600],
-                                              window_sizes = [2, 5, 10, 15, 20, 25]
-                                              )
-
-
-    print('Results are in %s' % test_results_file)
+    if args.action == 'create_model':    
     
+        if args.file is None or not os.path.exists(args.file):
+            raise ValueError("Must provide .csv or .sqlite file with enrollment numbers for model creation.")
+        if args.savefile is None:
+            raise ValueError("Must provide filename for saving the model model creation.")
+        
+        wordvec_creator = Word2VecModelCreator(
+            action=Action.CREATE_MODEL, 
+            actionFileName=args.file,
+            saveFileName=args.savefile,
+            hasHeader=True if not args.file.endswith('.sqlite') else False,
+            low_strm=args.low_strm,
+            high_strm=args.high_strm
+            )
+        print("Model file: '%s';\nVector file: '%s'" % (wordvec_creator.model_filename,
+                                                        wordvec_creator.wv_filename)
+                                                        )
+    elif args.action == 'load_model':
+        wordvec_creator = Word2VecModelCreator(
+            action=Action.LOAD_MODEL, 
+            actionFileName=args.file
+            )
+    elif args.action == 'load_vectors':
+        wv_file = wordvec_creator.wv_filename if args.file is None else args.file
+        wordvec_creator.load_word_vectors(wv_file)
+        
+    elif args.action == 'optimize_model':
+    
+        if args.savefile is None:
+            raise ValueError("Must provide save filename for optimization result.")
+        # Now we have a wordvec_creator with a model in
+        # in, or with some model's vectors.
+        timestr = time.strftime("%Y-%m-%d_%H_%M_%S")
+        test_results_file = os.path.join(save_dir, 'cross_reg_test_res_%s.txt' % timestr)
+        res_objs = wordvec_creator.optimize_model(VerificationMethods.RANK,
+                                                  grid_results_save_file_name=args.savefile,
+                                                  vector_sizes = [50, 100, 150, 200, 300, 400, 500, 600],
+                                                  window_sizes = [2, 5, 10, 15, 20, 25]
+                                                  )
+    
+    
+        print('Results are in %s' % args.savefile)
+                                      
