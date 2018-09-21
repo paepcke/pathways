@@ -834,15 +834,17 @@ class TSNECourseVisualizer(object):
             if self.dot_manager.get_dots(x[i],y[i]) is not None:
                 dot_artist = PseudoDotArtist(course_name, (x[i],y[i]))
             else:
-                # Make H&S smaller, b/c there are so many of them that
-                # they overwhelm the images:
+                # Stopped making H&S smaller (originally b/c there are so many of 
+                # them that overwhelm the images), b/c now we no longer overplot.
+                # Left the code commented for reference:
     
                 dot_artist = self.ax_tsne.scatter(x[i],y[i],
                                           c=self.color_map[course_name],
                                           picker=TSNECourseVisualizer.PICK_RADIUS, # Was 5
                                           label=labels_course_names[i],
                                           marker='o',
-                                          s = 10 if acad_group == 'H&S' else 20 # s is markersize
+                                          s = 20
+                                          #s = 10 if acad_group == 'H&S' else 20 # s is markersize
                                           )
             # Add this point's coords to our list. The offsets are 
             # a list of this scatterplot's points. But there is only 
