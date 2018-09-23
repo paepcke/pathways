@@ -22,6 +22,7 @@ from logging import error as logErr
 from logging import info as logInfo
 from logging import warn as logWarn
 import logging
+import math
 import os
 import pickle
 from queue import Empty  # The regular queue's empty exception
@@ -32,12 +33,6 @@ import time
 
 from matplotlib import artist
 import matplotlib
-
-# Backend spec must be before pyplot import!
-#matplotlib.use('TkAgg')
-matplotlib.use('Qt5Agg')
-
-from matplotlib.collections import PathCollection as tsne_dot_class
 from matplotlib.path import Path
 
 from fast_dot_retrieval.fast_dot_retrieval import DotManager
@@ -50,6 +45,13 @@ from pathways.common_classes import Message
 from pathways.course_sim_analytics import CourseSimAnalytics
 from pathways.course_vector_creation import CourseVectorsCreator
 from pathways.enrollment_plotter import EnrollmentPlotter
+
+
+# Backend spec must be before pyplot import!
+#matplotlib.use('TkAgg')
+matplotlib.use('Qt5Agg')
+
+
 
 
 #from pathways.Old.tsne_viz_process import TsneViz
@@ -66,6 +68,48 @@ class RestartRequest(Exception):
 class ShowOrSave(Enum):
     SHOW = 1
     SAVE = 2
+
+class DotSizeFactor(object):
+    '''
+	Factors by which to increase a rendered
+	dot for each pseudo artist at the same xy.
+	For clarity the factor needs to be modified
+	depending on how many total dots are on the
+	plot. The more total number of dots, the more
+	modest the per-underlying-dot enlargement 
+	factor must be.
+    '''
+    
+    LOW_LIMIT        = 500
+    MEDIUM_LIMIT     = 5000
+    LARGE_LIMIT      = 10000
+    
+    LOW_FACTOR       = 1.14
+    MEDIUM_FACTOR    = 1.2
+    LARGE_FACTOR     = 1.1
+    HUGE_FACTOR      = 1.001
+
+    MAX_DOT_SIZE     = 300 # Max size of any one dot
+    EDGE_WIDTH       = 1.0  # Width of black edge around 
+                            # dots whose size was capped.
+    
+    num_dots         = 0    # Remember num dots we are called with.
+    
+    @classmethod
+    def dot_growth_factor(cls, num_dots_in_fig):
+
+        # Retain for reference
+        cls.num_dots = num_dots_in_fig
+        
+        if num_dots_in_fig <= cls.LOW_LIMIT:
+            return cls.LOW_FACTOR
+        elif num_dots_in_fig <= cls.MEDIUM_LIMIT:
+            return cls.MEDIUM_FACTOR
+        elif num_dots_in_fig <= cls.LARGE_LIMIT:
+            return cls.LARGE_FACTOR
+        else:
+            return cls.HUGE_FACTOR
+        
 
 class TSNECourseVisualizer(object):
     '''
@@ -102,6 +146,9 @@ class TSNECourseVisualizer(object):
     # Width and color of polygon selection lines:
     POLY_SELECT_WIDTH = 3
     POLY_SELECT_COLOR = 'gray'
+    
+    # Matplotlib size of one dot:
+    DOT_SIZE = 20
     
     # File with a bulk of explict mappings from course name to acadGrp:
     course2school_map_file  = os.path.join(os.path.dirname(__file__), '../data/courseNameAcademicOrg.csv')
@@ -735,7 +782,7 @@ class TSNECourseVisualizer(object):
         self.prepare_course_list_panel()
         # Only need to create the scatter points if we did not restore() above:
         if fittedModelFileName is None:
-            scatter_plot = self.add_course_scatter_points(x, y, labels_course_names)
+            self.add_course_scatter_points(x, y, labels_course_names)
         
             # Get the set of academic groups represented by these used courses.
             # That's different from the TSNECourseVisualizer.active_acad_grps list. That one
@@ -766,7 +813,12 @@ class TSNECourseVisualizer(object):
         # mouse moves. But in addition to the event, several 
         # other quantities are passed:
         curried_hover = functools.partial(self.hover, annot)
+
+        # Increase dot sizes by how many pseudo artists are
+        # below:
         
+        self.adjust_dot_sizes()
+                
         # Connect the listeners:
         
         # Hovering:
@@ -843,7 +895,7 @@ class TSNECourseVisualizer(object):
                                           picker=TSNECourseVisualizer.PICK_RADIUS, # Was 5
                                           label=labels_course_names[i],
                                           marker='o',
-                                          s = 20
+                                          s = TSNECourseVisualizer.DOT_SIZE
                                           #s = 10 if acad_group == 'H&S' else 20 # s is markersize
                                           )
             # Add this point's coords to our list. The offsets are 
@@ -866,7 +918,45 @@ class TSNECourseVisualizer(object):
             
         logInfo("Done adding course scatter points.")
         return dot_artist
+
+    #--------------------------------
+    # adjust_dot_sizes
+    #------------------
         
+    def adjust_dot_sizes(self):
+        
+        _rendered, _pseudo, largest_family_size, num_dots = self.dot_manager.num_artists()
+        # Get the per-pseudo-artist dot size increase factor
+        # for the total number of dots in this figure:
+        #*************
+        #***size_growth_factor = DotSizeFactor.dot_growth_factor(num_dots)
+        size_growth_factor = math.log(largest_family_size)
+        dot_size_stepsize = (DotSizeFactor.MAX_DOT_SIZE - TSNECourseVisualizer.DOT_SIZE) / largest_family_size
+        #*************
+        
+        # For each rendered dot, get number of pseudo artists below it:
+        for rendered_artist in self.dot_manager.all_rendered_artists:
+            num_pseudos_underneath = len(self.dot_manager.pseudo_artists_with_rendered(rendered_artist))
+            #**************************
+            # Current matplotlib dot size is available as a single-value list, like [40]
+            curr_size = rendered_artist.get_sizes()[0]
+            total_size_increase_factor = size_growth_factor ** num_pseudos_underneath
+            new_size = curr_size * total_size_increase_factor
+            
+            new_size = TSNECourseVisualizer.DOT_SIZE + (num_pseudos_underneath * dot_size_stepsize)
+            #**************
+
+            
+            #**************
+            # Put a cap on the size:
+            #************
+#             if new_size > DotSizeFactor.MAX_DOT_SIZE:
+#                 new_size = DotSizeFactor.MAX_DOT_SIZE
+#                 rendered_artist.set_linewidth([DotSizeFactor.EDGE_WIDTH])
+#                 rendered_artist.set_edgecolor('black')
+            #************
+            
+            rendered_artist.set_sizes([new_size])
 
     #--------------------------
     # add_legend 
@@ -914,7 +1004,7 @@ class TSNECourseVisualizer(object):
     # update_annot 
     #----------------
 
-    def update_annot(self, dot_artist, annot):
+    def update_annot(self, dot_artist, annot, num_in_cluster):
         '''
         Update the tooltip surface with the course name
         
@@ -922,6 +1012,8 @@ class TSNECourseVisualizer(object):
         @type dot_artist: [[float,float]]
         @param annot: tooltip surface
         @type annot: ?
+        @param num_in_cluster: number of dots in the cluster 
+        @type num_in_cluster: int
         '''
         pos = dot_artist.get_offsets()
         # Position is like array([(9.90404368, 2.215768)]). So
@@ -932,7 +1024,7 @@ class TSNECourseVisualizer(object):
         if acad_grp_name is None:
             # Ignore the one course named '\\N':
             return
-        label_text    = course_name + '/' + acad_grp_name
+        label_text    = course_name + '/' + acad_grp_name + '(%s)' % num_in_cluster
         annot.set_text(label_text)
         #dot_color = dot_artist.get_facecolor()[0]
         #annot.get_bbox_patch().set_facecolor(dot_color)
@@ -1007,7 +1099,7 @@ class TSNECourseVisualizer(object):
     # append_to_course_list_display 
     #----------------
 
-    def append_to_course_list_display(self, course_name, priorText=''):
+    def append_to_course_list_display(self, course_name_or_names, priorText=''):
         '''
         Get already-displayed course descriptions. See whether we already have more
         than our upper limit. If not, find courses descriptions, make a new line for
@@ -1016,8 +1108,8 @@ class TSNECourseVisualizer(object):
         If standalone, updates the local display. If control surface is
         separate, then just return the new line of course/descr.
         
-        @param course_name: course name to append
-        @type course_name: string
+        @param course_name_or_names: course name(s) to append
+        @type course_name_or_names: {string | (string)
         @param priorText: any text to which course info is to be appended
         @type priorText: str
         @return: priorText with course name with course description attached.
@@ -1028,21 +1120,26 @@ class TSNECourseVisualizer(object):
         # Get text from standalone board, or empty str if not
         # standalone:
         curr_text += self.get_text_standalone_board()
+        if isinstance(course_name_or_names, str):
+            course_name_or_names = [course_name_or_names]
+
         try:
-            new_text = curr_text + course_name
-            # If we have course descriptions loaded, add short and long descriptions:
-            if len(TSNECourseVisualizer.course_descr_dict) > 0:
-                try:
-                    descr_description_dict = TSNECourseVisualizer.course_descr_dict[course_name] 
-                    descr = descr_description_dict['descr']
-                    description = descr_description_dict['description']
-                except KeyError:
-                    # descr/description unavalable for this course:
-                    descr = 'unavailable'
-                    description = ''
-                new_text += ' ' + descr
-                if description != '\\N':
-                    new_text += '; ' + description
+            for course_name in course_name_or_names:            
+                new_text = curr_text + course_name
+                # If we have course descriptions loaded, add short and long descriptions:
+                if len(TSNECourseVisualizer.course_descr_dict) > 0:
+                    try:
+                        descr_description_dict = TSNECourseVisualizer.course_descr_dict[course_name] 
+                        descr = descr_description_dict['descr']
+                        description = descr_description_dict['description']
+                    except KeyError:
+                        # descr/description unavalable for this course:
+                        descr = 'unavailable'
+                        description = ''
+                    new_text += ' ' + descr
+                    if description != '\\N':
+                        new_text += '; ' + description
+                curr_text = new_text + '<br>'
         finally:
             if len(new_text) > 0 and self.standalone:
                 # Update local display:
@@ -1113,7 +1210,7 @@ class TSNECourseVisualizer(object):
             dot_artists = self.dot_manager.get_dots(event.xdata, event.ydata)
             first_artist = None if dot_artists is None else dot_artists[0]
             if first_artist is not None:
-                self.update_annot(first_artist, annot)
+                self.update_annot(first_artist, annot, len(dot_artists))
                 annot.set_visible(True)
                 fig.canvas.draw_idle()
             else:
@@ -1127,7 +1224,8 @@ class TSNECourseVisualizer(object):
 
     def onpick(self, event):
         '''
-        Clicked on a course point. Append that course to the course board
+        Clicked on a course point. Append that course and all other
+        course in the clicked-on cluster to the course board
         display. This method is called multiple times when marks are
         overlapping. Collect the events that belong to one click, and
         only update board in the end:
@@ -1136,12 +1234,17 @@ class TSNECourseVisualizer(object):
         @type event: 
         '''
         
-        course_name = event.artist.get_label()
+        # Get names of all courses in click-on cluster:
+        artists_in_cluster = self.dot_manager.get_dots(event.mouseevent.xdata, event.mouseevent.ydata)
+        if artists_in_cluster is None:
+            self.control_board_error('Please click near the center of dots.')
+            return
+        course_names = [artist.get_label() for artist in artists_in_cluster] 
         
         # Get existing list in course name list and
         # add the new course to it:
           
-        crse_name_plus_descr = self.append_to_course_list_display(course_name)
+        crse_name_plus_descr = self.append_to_course_list_display(course_names)
         if not self.standalone:
             self.send_to_main(Message('update_crse_board', crse_name_plus_descr))
 

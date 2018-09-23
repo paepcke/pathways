@@ -28,10 +28,6 @@ class DotManager(object):
         Constructor
         '''
         
-        #**********
-        self.num_calls = 0
-        #**********
-        
         self.picker_radius = picker_radius
         
         x_min = lower_left[0]
@@ -64,6 +60,15 @@ class DotManager(object):
         
         num_rows = len(self.y_partitions)
         num_cols =  len(self.x_partitions)
+
+        # Keep track of rendered and pseudo artist obs:        
+        self.all_rendered_artists = []
+        self.all_pseudo_artists = []
+        
+        # For each rendered obj, keep track of associated
+        # pseudo artists:
+        
+        self.stacked_dots_dict = {}
         
         # Create the 2D array with an empty dict in each cell.
         # Any of the pythonic ways surprise you by having cells
@@ -122,6 +127,30 @@ class DotManager(object):
         except IndexError as e:
             print('Error: %s' % repr(e))
             
+        fuzzy_match = self.match_fuzzily(dot_dict, x, y)
+        if fuzzy_match is None:
+            return None
+        else:
+            return dot_dict[fuzzy_match]
+    
+    #--------------------------------
+    # match_fuzzily 
+    #------------------
+    
+    def match_fuzzily(self, dot_dict, x, y):
+        '''
+        In the given dict of the form {(x_pos,y_pos) : [dot_objects]}, find
+        the (x_pos,y_pos) that are within picker_radius of x,y.
+        Return that tuple, or None. 
+        
+        @param dot_dict: dict of position tuples to list of dot objects
+        @type dot_dict: {(float,float) : [{PathCollection | PseudoArtist}]
+        @param x: x position for which to perform fuzzy search
+        @type x: float
+        @param y: y position for which to perform fuzzy search
+        @type y: float
+        '''
+        
         for dot_x,dot_y in dot_dict.keys():
             low_x_bound  = dot_x - self.picker_radius
             high_x_bound = dot_x + self.picker_radius
@@ -129,8 +158,9 @@ class DotManager(object):
             high_y_bound = dot_y + self.picker_radius
             if (low_x_bound <= x) and (high_x_bound >= x) and\
                (low_y_bound <= y) and (high_y_bound >= y):
-                return dot_dict[(dot_x, dot_y)]
+                return (dot_x, dot_y)
         return None
+        
     
     #--------------------------------
     # add_dot 
@@ -145,6 +175,11 @@ class DotManager(object):
         Dot artists are guaranteed to stay in the order
         in which they were added.
         
+        Updates lists of rendered and pseudo artists.
+        Updates dict mapping rendered artists to their
+        associated pseudo artists. I.e. the unrendered 
+        artists that would be underneath.
+        
         @param x: abscissa in data space
         @type x: float
         @param y: ordinal in data space
@@ -153,21 +188,19 @@ class DotManager(object):
         @type dot_artist_obj: {PathCollection | PseudoArtist}
         '''
         
-        #******************
-        self.num_calls += 1
-        if self.num_calls >= 491:
-            print('*************** num_calls: %s' % self.num_calls)
-        #******************
-        
-        
-        # Find x/y-positions in dot matrix:
+        # Find x/y-positions in the dot matrix grid:
         
         x_in_dot_matrix, y_in_dot_matrix = self.find_dot_matrix_indices(x, y)
+
+        # Get dict that holds the dots in that grid: 
         dot_dict = self.dot_dict_matrix[x_in_dot_matrix][y_in_dot_matrix]
-        if dot_dict.get((x,y), None) is None:
+        
+        fuzzy_match = self.match_fuzzily(dot_dict, x, y)
+        if fuzzy_match is None:
+            # No dot at the given x,y
             dot_dict[(x,y)] = [dot_artist_obj]
         else:
-            dot_dict[(x,y)].append(dot_artist_obj)
+            dot_dict[fuzzy_match].append(dot_artist_obj)
             
         # Update the lowest/highest seen dot coordinate
         # for x/y:
@@ -177,6 +210,73 @@ class DotManager(object):
         self.y_min_observed = y if self.y_min_observed is None else min(self.y_min_observed, y)
         self.y_max_observed = y if self.y_max_observed is None else max(self.y_max_observed, y)
         
+        # Update lists of rendered/pseudo artists:
+        
+        if isinstance(dot_artist_obj, PathCollection):
+            self.all_rendered_artists.append(dot_artist_obj)
+            # First (and only) rendered artist at this precise
+            # place. Init the self.stacked_dots_dict entry
+            # for that rendered artists:
+            self.stacked_dots_dict[dot_artist_obj] = []
+        else:
+            self.all_pseudo_artists.append(dot_artist_obj)
+            # Get the already existing rendered artist
+            # at this spot. It's the first in the list
+            # of dots at xy:
+            rendered_artist_at_xy = dot_dict[fuzzy_match][0]
+            self.stacked_dots_dict[rendered_artist_at_xy].append(dot_artist_obj)
+
+    #--------------------------------
+    # pseudo_artists_with_rendered 
+    #------------------
+
+    def pseudo_artists_with_rendered (self, rendered_artist):
+        '''
+        Given a rendered artist object, return a list
+        of pseudo artists that lie underneath at the
+        same xy.
+        
+        If given an object that does not exist in this
+        manager, throw an error
+        
+        @param rendered_artist: a rendered artist obj 
+        @type rendered_artist: PathCollection
+        @return: possibly empty list of pseudo artists
+        @rtype: [PseudoArtist]
+        @raise ValueError: error when rendered_object was never added to 
+            this manager.
+        '''
+        try:
+            return self.stacked_dots_dict[rendered_artist]
+        except KeyError:
+            raise ValueError('Unknown rendered artist: %s' % rendered_artist)
+        
+             
+    #--------------------------------
+    # num_artists 
+    #------------------
+    
+    def num_artists(self):
+        '''
+        Return:
+           1 number of rendered dots (i.e. the PathCollection objs)
+           2 number of pseudo dots (i.e. the PseudoArtist obs hiding underneath)
+           3 largest number of dots in one spot, incl. rendered and pseudo
+           4 total number of dots
+        
+        Number 3 is the 'largest family'.
+        
+        @return: triplet: number of rendered, number of pseudo artists, 
+            and their sum
+        @rtype: (int,int,int)
+        '''
+        num_rendered   = len(self.all_rendered_artists)
+        num_pseudo     = len(self.all_pseudo_artists)
+        total_artists  = num_rendered + num_pseudo
+        # The '1 + ...' is to count the rendered dot:
+        largest_family = 1 + max([len(pseudos) for pseudos in self.stacked_dots_dict.values()])
+        return (num_rendered, num_pseudo, largest_family, total_artists)
+    
     #--------------------------------
     # stats 
     #------------------
