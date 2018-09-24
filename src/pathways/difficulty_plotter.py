@@ -9,7 +9,7 @@ import sqlite3
 
 import matplotlib.pyplot as plt
 import numpy as np
-
+import pandas as pd
 
 class DifficultyPlotter(object):
     '''
@@ -39,7 +39,7 @@ class DifficultyPlotter(object):
         
         #***************
         stats_dict = self.compute_weekly_effort(course_list, self.sqlite_db_conn)
-        #stats_dict = self.compute_weekly_effort(None, self.sqlite_db_conn)
+        #****stats_dict = self.compute_weekly_effort(None, self.sqlite_db_conn)
         #***************
         
         # Distinguish between offerings and courses:
@@ -66,11 +66,10 @@ class DifficultyPlotter(object):
                                        num_offerings
                                        )
 
-        stats_summary_dict = self.compute_avg_effort_all_offerings(stats_dict)
-
         # Plot detail only if few enough courses
         # are included to plot
         if course_list is not None:
+            stats_summary_dict = self.compute_avg_effort_all_offerings(stats_dict)
             self.plot_difficulty_details(ax_difficulty_detail, stats_summary_dict)
             
         plt.tight_layout()
@@ -84,21 +83,22 @@ class DifficultyPlotter(object):
     #------------------
     
     def plot_difficulty_details(self, ax_diff_sum, stats_dict):
+        '''
+        Plot the stacked bar chart of student percentages who
+        responded with low, med, med_hi, high, or v_high. One
+        bar for each course. Each bar has five slices, one each
+        for low, med,...v_high
+        
+        @param ax_diff_sum: axes to plot into
+        @type ax_diff_sum: matplotlib.Axes
+        @param stats_dict: map evalunitid to CourseStats obj
+        @type stats_dict: {str : CourseStats
+        '''
         
         #num_courses  = len(list(stats_dict.keys()))
         course_names = [summary_obj['course_name'] for summary_obj in stats_dict.values()]
 
-        # A sequence of y-values (i.e. response percentages) for
-        # each course for each difficulty level. Those will the 
-        # stacks in earch course bar:        
-        difficulty_perc1 = [summary_obj[CourseStats.DIFF_LEVEL1] for summary_obj in stats_dict.values()]
-        difficulty_perc2 = [summary_obj[CourseStats.DIFF_LEVEL2] for summary_obj in stats_dict.values()]
-        difficulty_perc3 = [summary_obj[CourseStats.DIFF_LEVEL3] for summary_obj in stats_dict.values()]
-        difficulty_perc4 = [summary_obj[CourseStats.DIFF_LEVEL4] for summary_obj in stats_dict.values()]
-        difficulty_perc5 = [summary_obj[CourseStats.DIFF_LEVEL5] for summary_obj in stats_dict.values()]
-        difficulty_perc6 = [summary_obj[CourseStats.DIFF_LEVEL6] for summary_obj in stats_dict.values()]
-        difficulty_perc7 = [summary_obj[CourseStats.DIFF_LEVEL7] for summary_obj in stats_dict.values()]
-        difficulty_perc8 = [summary_obj[CourseStats.DIFF_LEVEL8] for summary_obj in stats_dict.values()]
+        difficulties_df = self.make_diffs_low_v_high_dataframe(stats_dict)
 
         X = course_names
         bar_width  = 0.35
@@ -107,14 +107,16 @@ class DifficultyPlotter(object):
         # Plot one difficulty level after the other,
         # Always on top of the previous one:
         
-        ax_diff_sum.bar(X,difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
-        ax_diff_sum.bar(X,difficulty_perc2, bottom=difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
-        ax_diff_sum.bar(X,difficulty_perc3, bottom=difficulty_perc2, align='center', width=bar_width, color='#6D80A5')
-        ax_diff_sum.bar(X,difficulty_perc4, bottom=difficulty_perc3, align='center', width=bar_width, color='#6D80A5')
-        ax_diff_sum.bar(X,difficulty_perc5, bottom=difficulty_perc4, align='center', width=bar_width, color='#4C6189')
-        ax_diff_sum.bar(X,difficulty_perc6, bottom=difficulty_perc5, align='center', width=bar_width, color='#4C6189')
-        ax_diff_sum.bar(X,difficulty_perc7, bottom=difficulty_perc6, align='center', width=bar_width, color='#262261')
-        ax_diff_sum.bar(X,difficulty_perc8, bottom=difficulty_perc7, align='center', width=bar_width, color='#262261')
+        difficulties_df.plot.barh(stacked=True)
+        
+#         ax_diff_sum.bar(X,difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
+#         ax_diff_sum.bar(X,difficulty_perc2, bottom=difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
+#         ax_diff_sum.bar(X,difficulty_perc3, bottom=difficulty_perc2, align='center', width=bar_width, color='#6D80A5')
+#         ax_diff_sum.bar(X,difficulty_perc4, bottom=difficulty_perc3, align='center', width=bar_width, color='#6D80A5')
+#         ax_diff_sum.bar(X,difficulty_perc5, bottom=difficulty_perc4, align='center', width=bar_width, color='#4C6189')
+#         ax_diff_sum.bar(X,difficulty_perc6, bottom=difficulty_perc5, align='center', width=bar_width, color='#4C6189')
+#         ax_diff_sum.bar(X,difficulty_perc7, bottom=difficulty_perc6, align='center', width=bar_width, color='#262261')
+#         ax_diff_sum.bar(X,difficulty_perc8, bottom=difficulty_perc7, align='center', width=bar_width, color='#262261')
         
     #--------------------------------
     # plot_difficulty_histogram 
@@ -162,6 +164,74 @@ class DifficultyPlotter(object):
                                     width=bar_width, 
                                     color='#9BA6BC')
         plt.setp(ax_difficulty_histogram.xaxis.get_majorticklabels(), rotation=45)
+        
+    #--------------------------------
+    # make_diffs_low_v_high_dataframe
+    #------------------
+
+    def make_diffs_low_v_high_dataframe(self, stats_dict):
+        '''
+        Returns a Pandas dataframe:
+    
+                      crs1, crs2, crs3, ...
+           'low'    
+           'med'
+           'med_hi'
+           'high'
+           'v_high
+    
+        The cells are percentages of student answers.
+        The levels 5-8 are summed to form v_high.
+    
+        @param stats_dict: map from evalunitid to course stats object
+        @type stats_dict: {str : CourseStats}
+        @returns: promised dataframe
+        @rtype Pandas.DataFrame()
+        '''
+    
+        course_names = [summary_obj['course_name'] for summary_obj in stats_dict.values()]
+    
+        # Get 1-d difficulty percentages: perc for difficulty level 1 of all courses in one row,
+        #                                 perc for difficulty level 2 of all courses in next row,
+        #     etc:
+        
+        low_difficulties    = [course_stat_obj[CourseStats.DIFF_LEVEL1] for course_stat_obj in stats_dict.values()]
+        med_difficulties    = [course_stat_obj[CourseStats.DIFF_LEVEL2] for course_stat_obj in stats_dict.values()]
+        med_hi_difficulties = [course_stat_obj[CourseStats.DIFF_LEVEL3] for course_stat_obj in stats_dict.values()]
+        high_difficulties   = [course_stat_obj[CourseStats.DIFF_LEVEL4] for course_stat_obj in stats_dict.values()]
+    
+        # Combine difficulty readings of levels 5-8: get the rows as
+        # above, then form a dataframe, whose sum() method will produce
+        # a Pandas Series of the levels 5-8:
+      
+        v_high_difficulties_a = [course_stat_obj[CourseStats.DIFF_LEVEL5] for course_stat_obj in stats_dict.values()]
+        v_high_difficulties_b = [course_stat_obj[CourseStats.DIFF_LEVEL6] for course_stat_obj in stats_dict.values()]
+        v_high_difficulties_c = [course_stat_obj[CourseStats.DIFF_LEVEL7] for course_stat_obj in stats_dict.values()]
+        v_high_difficulties_d = [course_stat_obj[CourseStats.DIFF_LEVEL8] for course_stat_obj in stats_dict.values()]
+    
+        df_for_collapsing = pd.DataFrame({'diff_level_vhigh_a' : pd.Series(v_high_difficulties_a, index=course_names),
+                                          'diff_level_vhigh_b' : pd.Series(v_high_difficulties_b, index=course_names),
+                                          'diff_level_vhigh_c' : pd.Series(v_high_difficulties_c, index=course_names),
+                                          'diff_level_vhigh_d' : pd.Series(v_high_difficulties_d, index=course_names)
+                                          })
+        # df_for_collapsing looks like this:
+        #           diff_level_vhigh_a   diff_level_vhigh_b   ... diff_level_vhighd
+        #   crs1
+        #   crs2
+        #    ...
+        #
+        # We need to sum row-wise. I.e. sum the percentages in diff_a through diff_d
+        # for each course to have only one percentage for each course. The 'axis=1' below
+        # ensures the row-wise addition (rather than col-wise, or all):
+        
+        difficulties = {'low'     : pd.Series(low_difficulties, index=course_names),
+                        'med'     : pd.Series(med_difficulties, index=course_names),
+                        'med_hi'  : pd.Series(med_hi_difficulties, index=course_names),
+                        'high'    : pd.Series(high_difficulties, index=course_names),
+                        'v_high'  : df_for_collapsing.sum(axis=1)
+                        }
+        difficulties_df = pd.DataFrame(difficulties, index=course_names)
+        return difficulties_df    
         
     #--------------------------------
     # compute_weekly_effort 
