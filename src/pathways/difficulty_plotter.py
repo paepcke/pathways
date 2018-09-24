@@ -69,20 +69,22 @@ class DifficultyPlotter(object):
         # the width needed for one course name. Multiply
         # by number bars, and add some air to the right 
         # and the left for the vertical axis labels.
-        fig_width  = 0.8 * len(course_names) + 4*bar_width
+        fig_width  = 0.8 * len(course_names) + 5*bar_width
         fig_height = 6.5 # inches
         
         self.fig, ax_diff_sum = plt.subplots(figsize=(fig_width, fig_height)) #@UnusedVariable
-        ax_diff_sum.bar(X,difficulty_perc1, align='center', width=0.35)
-        ax_diff_sum.bar(X,difficulty_perc2, bottom=difficulty_perc1, align='center', width=0.35)
-        ax_diff_sum.bar(X,difficulty_perc3, bottom=difficulty_perc2, align='center', width=0.35)
-        ax_diff_sum.bar(X,difficulty_perc4, bottom=difficulty_perc3, align='center', width=0.35)
-        ax_diff_sum.bar(X,difficulty_perc5, bottom=difficulty_perc4, align='center', width=0.35)
-        ax_diff_sum.bar(X,difficulty_perc6, bottom=difficulty_perc5, align='center', width=0.35)
-        ax_diff_sum.bar(X,difficulty_perc7, bottom=difficulty_perc6, align='center', width=0.35)
-        ax_diff_sum.bar(X,difficulty_perc8, bottom=difficulty_perc7, align='center', width=0.35)
-        
         ax_diff_sum.set_ylabel('Percent of reported difficulty')
+        
+        ax_diff_sum.bar(X,difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
+        ax_diff_sum.bar(X,difficulty_perc2, bottom=difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
+        ax_diff_sum.bar(X,difficulty_perc3, bottom=difficulty_perc2, align='center', width=bar_width, color='#6D80A5')
+        ax_diff_sum.bar(X,difficulty_perc4, bottom=difficulty_perc3, align='center', width=bar_width, color='#6D80A5')
+        ax_diff_sum.bar(X,difficulty_perc5, bottom=difficulty_perc4, align='center', width=bar_width, color='#4C6189')
+        ax_diff_sum.bar(X,difficulty_perc6, bottom=difficulty_perc5, align='center', width=bar_width, color='#4C6189')
+        ax_diff_sum.bar(X,difficulty_perc7, bottom=difficulty_perc6, align='center', width=bar_width, color='#262261')
+        ax_diff_sum.bar(X,difficulty_perc8, bottom=difficulty_perc7, align='center', width=bar_width, color='#262261')
+        
+        
     
     #--------------------------------
     # compute_weekly_effort 
