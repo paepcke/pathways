@@ -16,7 +16,7 @@ class DifficultyPlotter(object):
     classdocs
     '''
     
-    def __init__(self, parent, course_list, block=True):
+    def __init__(self, course_list, block=True):
         '''
         Constructor
         '''
@@ -95,28 +95,14 @@ class DifficultyPlotter(object):
         @type stats_dict: {str : CourseStats
         '''
         
-        #num_courses  = len(list(stats_dict.keys()))
-        course_names = [summary_obj['course_name'] for summary_obj in stats_dict.values()]
-
         difficulties_df = self.make_diffs_low_v_high_dataframe(stats_dict)
 
-        X = course_names
-        bar_width  = 0.35
-        ax_diff_sum.set_ylabel('Percent of reported difficulty')
+        ax_diff_sum.set_xlabel('Percent of student-reported difficulty')
         
-        # Plot one difficulty level after the other,
-        # Always on top of the previous one:
+        # Have Pandas do the plotting into the already prepared subplot:
+        difficulties_df.plot.barh(stacked=True, ax=ax_diff_sum)
         
-        difficulties_df.plot.barh(stacked=True)
-        
-#         ax_diff_sum.bar(X,difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
-#         ax_diff_sum.bar(X,difficulty_perc2, bottom=difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
-#         ax_diff_sum.bar(X,difficulty_perc3, bottom=difficulty_perc2, align='center', width=bar_width, color='#6D80A5')
-#         ax_diff_sum.bar(X,difficulty_perc4, bottom=difficulty_perc3, align='center', width=bar_width, color='#6D80A5')
-#         ax_diff_sum.bar(X,difficulty_perc5, bottom=difficulty_perc4, align='center', width=bar_width, color='#4C6189')
-#         ax_diff_sum.bar(X,difficulty_perc6, bottom=difficulty_perc5, align='center', width=bar_width, color='#4C6189')
-#         ax_diff_sum.bar(X,difficulty_perc7, bottom=difficulty_perc6, align='center', width=bar_width, color='#262261')
-#         ax_diff_sum.bar(X,difficulty_perc8, bottom=difficulty_perc7, align='center', width=bar_width, color='#262261')
+        plt.legend(loc='center left', bbox_to_anchor=(1.0, 0.5))
         
     #--------------------------------
     # plot_difficulty_histogram 
@@ -150,7 +136,8 @@ class DifficultyPlotter(object):
         @type num_courses: int
         '''
     
-        xlabel_text  = ['level%s' % str(n+1) for n in range(len(normalized_vote_counts))]
+        #xlabel_text  = ['level%s' % str(n+1) for n in range(len(normalized_vote_counts))]
+        xlabel_text = ['Low', 'Med', 'Med/Hi', 'High', 'V-High1','V-High2','V-High3','V-High4']
         bar_width  = 0.35
         
         ax_difficulty_histogram.set_ylabel('Reported Difficulty Levels for Course Cluster')
@@ -257,13 +244,17 @@ class DifficultyPlotter(object):
         try:
             cur = db.cursor()
             
+            # If we were given a specific list of courses,
+            # only include those in the query, else pull info
+            # on all courses:
+            
             if course_list is not None:
                 # The funky format string below creates a sequence
                 # of single-quoted strings: ('CS 108', 'MATH 40', ...):
                 query = '''SELECT crse_code,
-        					          all_eval_xref.termcore,
-        					          all_eval_xref.evalunitid,
-        					          hour_response
+        					      all_eval_xref.termcore,
+        					      all_eval_xref.evalunitid,
+        					      hour_response
         					  FROM all_eval_hours JOIN all_eval_xref
         					    ON all_eval_hours.evalunitid = all_eval_xref.evalunitid
         					 WHERE crse_code IN (%s)
@@ -273,9 +264,9 @@ class DifficultyPlotter(object):
         					''' % ("'" + "','".join(course_list) + "'")
             else:
                 query = '''SELECT crse_code,
-        					          all_eval_xref.termcore,
-        					          all_eval_xref.evalunitid,
-        					          hour_response
+        					      all_eval_xref.termcore,
+        					      all_eval_xref.evalunitid,
+        					      hour_response
         					  FROM all_eval_hours JOIN all_eval_xref
         					    ON all_eval_hours.evalunitid = all_eval_xref.evalunitid
         					    ORDER BY crse_code,
@@ -298,6 +289,9 @@ class DifficultyPlotter(object):
         except StopIteration:
             # Table empty. Complain:
             raise ValueError("Table of weekly hours is empty.")
+        except TypeError:
+            # No entry found for any course:
+            raise ValueError("Course not found from %s" % course_list)
         
         crse_dict = self.init_course_dict(evalunitid, termcore, crse_code, hour_response)
                 
@@ -775,6 +769,18 @@ class CourseSummaryStats(object):
         
         
 if __name__ == '__main__':
-    DifficultyPlotter(None,['CS 106A', 'CS 106B', 'CS 106X'])        
-    #DifficultyPlotter(['CS106A'])
+    #DifficultyPlotter(['CS 106A', 'CS 106B', 'CS 106X'])        
+    #DifficultyPlotter(['CS 106A', 'CS 106B', 'CS 106X', 'CS 140'])        
+    DifficultyPlotter(['CS 140'])
+    
+    # Test single course not found (missing space between Math and 104):
     #DifficultyPlotter(['MATH104'])
+    
+    # Test one of several courses not found (missing space between Math and 104):
+    # Simply uses the one it finds:
+    #DifficultyPlotter(['CS 106A', 'MATH104'])
+    
+    # Same, but bad course is first:
+    # Simply uses the one it finds:
+    #DifficultyPlotter(['MATH104', 'CS 106A'])
+    
