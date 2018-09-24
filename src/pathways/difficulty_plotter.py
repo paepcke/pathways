@@ -3,12 +3,13 @@ Created on Aug 28, 2018
 
 @author: paepcke
 '''
+from _collections import OrderedDict
 import os
 import sqlite3
-import numpy as np
 
 import matplotlib.pyplot as plt
-from _collections import OrderedDict
+import numpy as np
+
 
 class DifficultyPlotter(object):
     '''
@@ -36,17 +37,53 @@ class DifficultyPlotter(object):
         # Those objs hold absolute, and percentage responses
         # for each level of difficulty:
         
+        #***************
         stats_dict = self.compute_weekly_effort(course_list, self.sqlite_db_conn)
+        #stats_dict = self.compute_weekly_effort(None, self.sqlite_db_conn)
+        #***************
+        
+        # Distinguish between offerings and courses:
+        num_offerings = len(stats_dict)
+        course_name_set = {crse_stats_obj['crse_code'] for crse_stats_obj in stats_dict.values()}
+        
+        normalized_vote_counts = self.compute_response_distribution(stats_dict)
+        
+        # Create a figure prepared for showing all stats plots 
+        # we want to show:
+        num_plots = 2 if course_list is not None else 1
+        if num_plots is None:
+            # One plot: 1 row, 1 col, index 1:
+            _fig, ax_difficulty_histogram = plt.subplots(1, 1)
+        else:
+            # Two plots: the histogram of difficulty distribution,
+            # and the detailed difficulties:
+            # Plots will be arranged in one row and two cols 
+            _fig, [ax_difficulty_histogram, ax_difficulty_detail] = plt.subplots(1, 2)
+        
+        self.plot_difficulty_histogram(ax_difficulty_histogram,
+                                       normalized_vote_counts,
+                                       len(course_name_set),
+                                       num_offerings
+                                       )
+
         stats_summary_dict = self.compute_avg_effort_all_offerings(stats_dict)
 
-        self.plot_summary_stats(stats_summary_dict)
-        self.fig.show()
+        # Plot detail only if few enough courses
+        # are included to plot
+        if course_list is not None:
+            self.plot_difficulty_details(ax_difficulty_detail, stats_summary_dict)
+            
+        plt.tight_layout()
+        # Make a bit of room above the subplots
+        # so that the main figure title doesn't overlap:
+        plt.subplots_adjust(top=0.9)
+        plt.show(block=True)
         
     #--------------------------------
-    # plot_summary_stats 
+    # plot_difficulty_details 
     #------------------
     
-    def plot_summary_stats(self, stats_dict):
+    def plot_difficulty_details(self, ax_diff_sum, stats_dict):
         
         #num_courses  = len(list(stats_dict.keys()))
         course_names = [summary_obj['course_name'] for summary_obj in stats_dict.values()]
@@ -65,15 +102,10 @@ class DifficultyPlotter(object):
 
         X = course_names
         bar_width  = 0.35
-        # Width by experimentation: 0.8 inches is about
-        # the width needed for one course name. Multiply
-        # by number bars, and add some air to the right 
-        # and the left for the vertical axis labels.
-        fig_width  = 0.8 * len(course_names) + 5*bar_width
-        fig_height = 6.5 # inches
-        
-        self.fig, ax_diff_sum = plt.subplots(figsize=(fig_width, fig_height)) #@UnusedVariable
         ax_diff_sum.set_ylabel('Percent of reported difficulty')
+        
+        # Plot one difficulty level after the other,
+        # Always on top of the previous one:
         
         ax_diff_sum.bar(X,difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
         ax_diff_sum.bar(X,difficulty_perc2, bottom=difficulty_perc1, align='center', width=bar_width, color='#9BA6BC')
@@ -84,27 +116,103 @@ class DifficultyPlotter(object):
         ax_diff_sum.bar(X,difficulty_perc7, bottom=difficulty_perc6, align='center', width=bar_width, color='#262261')
         ax_diff_sum.bar(X,difficulty_perc8, bottom=difficulty_perc7, align='center', width=bar_width, color='#262261')
         
+    #--------------------------------
+    # plot_difficulty_histogram 
+    #------------------
         
+    def plot_difficulty_histogram(self, 
+                                  ax_difficulty_histogram, 
+                                  normalized_vote_counts, 
+                                  num_courses,
+                                  num_offerings):
+        '''
+        Given list of eight (or some other length) normalized
+        difficulty counts, plot a histogram. Each count corresponds
+        to a particular difficulty level: 1 though n. 
+        
+        Each count is assumed to be the sum of all students who reported the
+        respective difficulty level as appropriate. Counts are
+        expected to be normalized to be between zero and one.
+        
+        The creator of normalized_vote_counts would have selected
+        the courses to include in the student responses. Could be all
+        courses, or some small list of them.
+        
+        Number of courses is used only in the Y-axis label. If None,****
+        
+        @param ax_difficulty_histogram: the Axes instance to plot on
+        @type ax_difficulty_histogram: Axes
+        @param normalized_vote_counts: counts of difficulty levels
+        @type normalized_vote_counts: [float]
+        @param num_courses: number of courses included in histogram
+        @type num_courses: int
+        '''
     
+        xlabel_text  = ['level%s' % str(n+1) for n in range(len(normalized_vote_counts))]
+        bar_width  = 0.35
+        
+        ax_difficulty_histogram.set_ylabel('Reported Difficulty Levels for Course Cluster')
+        ax_difficulty_histogram.get_figure().suptitle("Difficulty Distribution %s Courses, %s Offerings" %\
+                                                       (num_courses, num_offerings)
+                                                       )
+        
+        ax_difficulty_histogram.bar(xlabel_text, 
+                                    normalized_vote_counts, 
+                                    align='center', 
+                                    width=bar_width, 
+                                    color='#9BA6BC')
+        plt.setp(ax_difficulty_histogram.xaxis.get_majorticklabels(), rotation=45)
+        
     #--------------------------------
     # compute_weekly_effort 
     #------------------
     
     def compute_weekly_effort(self, course_list, db):
+        '''
+        For each course in courselist, compute the percentage of
+        students who reported difficulty 1-8. Each offering of
+        a course is treated as a different course in this context.
+        Method  compute_average_effort_all_offerings() combines
+        offerings later.
+        
+        If course_list is NULL, all 5k plus courses are processed.
+        This will take around four or five minutes.
+        
+        @param course_list: list of course names for which to compute percentages
+        @type course_list: {[str] | None}
+        @param db: Sqlite3 connection object
+        @type db: connection
+        '''
         
         try:
             cur = db.cursor()
-            query = '''SELECT crse_code,
-    					          all_eval_xref.termcore,
-    					          all_eval_xref.evalunitid,
-    					          hour_response
-    					  FROM all_eval_hours JOIN all_eval_xref
-    					    ON all_eval_hours.evalunitid = all_eval_xref.evalunitid
-    					 WHERE crse_code IN (%s)
-    					    ORDER BY crse_code,
-                                     all_eval_xref.evalunitid,
-                                     hour_response
-    					''' % ("'" + "','".join(course_list) + "'")
+            
+            if course_list is not None:
+                # The funky format string below creates a sequence
+                # of single-quoted strings: ('CS 108', 'MATH 40', ...):
+                query = '''SELECT crse_code,
+        					          all_eval_xref.termcore,
+        					          all_eval_xref.evalunitid,
+        					          hour_response
+        					  FROM all_eval_hours JOIN all_eval_xref
+        					    ON all_eval_hours.evalunitid = all_eval_xref.evalunitid
+        					 WHERE crse_code IN (%s)
+        					    ORDER BY crse_code,
+                                         all_eval_xref.evalunitid,
+                                         hour_response
+        					''' % ("'" + "','".join(course_list) + "'")
+            else:
+                query = '''SELECT crse_code,
+        					          all_eval_xref.termcore,
+        					          all_eval_xref.evalunitid,
+        					          hour_response
+        					  FROM all_eval_hours JOIN all_eval_xref
+        					    ON all_eval_hours.evalunitid = all_eval_xref.evalunitid
+        					    ORDER BY crse_code,
+                                         all_eval_xref.evalunitid,
+                                         hour_response
+        					'''
+                
             cur.execute(query)
         except Exception as e:
             raise IOError("Could not retrieve hrs/week responses from db (%s)" % repr(e))
@@ -163,6 +271,45 @@ class DifficultyPlotter(object):
         return summary_dict
 
     #--------------------------------
+    # compute_response_distribution 
+    #------------------
+
+    def compute_response_distribution(self, stats_dict):
+        '''
+        Given a dict evalunitid --> CourseStats object
+        with all offerings being separate entries, compute
+        the overall distribution of 'votes' for the difficulty
+        slots 1-8. We just separately add the numbers for each
+        difficulty. At the end we normalize to 0-1. We return
+        vectors X and Y, where X is [1,2,...8], and Y are the 
+        (normalized) numbers of students who reported the respective
+        difficulty. 
+        
+        @param stats_dict: dict from evalunitid to CourseStats obj
+        @type stats_dict: {str : CourseStat}
+        @return: list of eight elements. The nth element (0<=n<=7)
+            is the number of votes for difficult n+1.
+        @rtype: float
+            
+        '''
+        sums = [0] * 8
+        for course_stats_obj in stats_dict.values():
+            # CourseStats objs have info, such as the term
+            # when the offering occurred, etc. The obj
+            # also acts as a dict for the difficulty levels
+            sums[0] += course_stats_obj[CourseStats.DIFF_LEVEL1]
+            sums[1] += course_stats_obj[CourseStats.DIFF_LEVEL2]
+            sums[2] += course_stats_obj[CourseStats.DIFF_LEVEL3]
+            sums[3] += course_stats_obj[CourseStats.DIFF_LEVEL4]
+            sums[4] += course_stats_obj[CourseStats.DIFF_LEVEL5]
+            sums[5] += course_stats_obj[CourseStats.DIFF_LEVEL6]
+            sums[6] += course_stats_obj[CourseStats.DIFF_LEVEL7]
+            sums[7] += course_stats_obj[CourseStats.DIFF_LEVEL8]
+        np_sums = np.array(sums)
+        normed_sums = list(np_sums / max(np_sums))
+        return normed_sums
+
+    #--------------------------------
     # init_course_dict 
     #------------------
 
@@ -183,134 +330,6 @@ class DifficultyPlotter(object):
         crse_dict[CourseStats.diff_level(hour_response)] = 1
         return crse_dict
     
-#------------------------    
-    
-    def attempt(self, course_list):
-        N =  len(course_list)
-        
-        # Percent of students reporting levels 1-6:
-        diff_level1 = (3,5,5)
-        diff_level2 = (1,1,2)
-        diff_level3 = (40,20,40)
-        diff_level4 = (6,15,3)
-        diff_level5 = (25,35,45)
-        diff_level6 = (25,15,5)
-        
-        ind = np.arange(len(course_list))
-        width = .35
-
-        plot_diff1 = plt.bar(ind, diff_level1, width, color='#d62728') 
-        plot_diff2 = plt.bar(ind, diff_level2, width, 
-                             bottom=diff_level1
-                             )
-
-        plt.ylabel('Percentage of Reports')
-        plt.title('Percentage of Students Reporting Course Difficulties 1-6')
-        plt.xticks(ind, ('G1', 'G2', 'G3', 'G4', 'G5'))
-        plt.yticks(np.arange(0, 100, 10))
-        plt.legend((plot_diff1[0], plot_diff2[0]), ('CourseStats 1', 'CourseStats 2'))
-        
-        plt.show()        
-        
-    def test(self):
-
-
-        N = 5
-        menMeans = (20, 35, 30, 35, 27)
-        womenMeans = (25, 32, 34, 20, 25)
-        menStd = (2, 3, 4, 1, 2)
-        womenStd = (3, 5, 2, 3, 3)
-        ind = np.arange(N)    # the x locations for the courses
-        width = 0.35       # the width of the bars: can also be len(x) sequence
-        
-        p1 = plt.bar(ind, menMeans, width, color='#d62728', yerr=menStd)
-        p2 = plt.bar(ind, womenMeans, width,
-                     bottom=menMeans, yerr=womenStd)
-        
-        plt.ylabel('Scores')
-        plt.title('Scores by group and gender')
-        plt.xticks(ind, ('G1', 'G2', 'G3', 'G4', 'G5'))
-        plt.yticks(np.arange(0, 81, 10))
-        plt.legend((p1[0], p2[0]), ('Men', 'Women'))
-        
-        plt.show()        
-        
-        
-    def get_sums(self, course_list):
-        conn = sqlite3.connect(self.db_file)
-        cur  = conn.cursor()
-        query = '''SELECT strm, SUM(enrollment) 
-                      FROM enrollment_tally 
-                     WHERE coursename IN (%s)
-                     GROUP BY strm;
-                     ''' % ','.join("'{0}'".format(x) for x in course_list)
-        cur.execute(query)
-        strm_sum_list = cur.fetchall()
-        return strm_sum_list
-    
-    def plot_enrollment_history(self, data, course_list):
-        
-        quarters    = [int(strm_enrollment[0]) for strm_enrollment in data]
-        enrollments = [strm_enrollment[1] for strm_enrollment in data]
-        y_pos = np.arange(len(quarters))
-
-        self.fig, ax = plt.subplots() #@UnusedVariable
-        ax.bar(y_pos, enrollments, align='center', alpha=0.5)
-        self.set_xticks(quarters, ax)
-        partial_course_str = self.get_partial_course_list(course_list, 3)
-        ax.set_ylabel('Enrollment')
-        title = 'Quarterly Enrollment %s Since 2000' % partial_course_str
-        ax.set_title(title)
-        self.fig.canvas.set_window_title(title)
-        
-    def set_xticks(self, quarters, ax):
-        '''
-        Given a list of strm, create X-axis labels for just the
-        Fall quarter of each year. Have them show an an angle.
-        
-        @param quarters: quarter codes (strms)
-        @type quarters: [int]
-        '''
-        ax.set_xlim(1,len(quarters))
-        indices_of_fall_quarters = []
-        xtick_labels = []
-        # First of the years in the strms: 
-        # For 1182 that's 118:
-        curr_year = int(quarters[0] / 10)
-        
-        for quarter_num, strm in enumerate(quarters):
-            #if strm % 10 == 2:
-            year = int(strm / 10) 
-            if year != curr_year:
-                # It's the first quarter in a new year. Populate the xticks:
-                (strm_year, quarter_name) =  self.year_from_strm(strm)
-                xtick_labels.append('%s %s' % (quarter_name, strm_year))
-                indices_of_fall_quarters.append(quarter_num)
-                curr_year = year
-        ax.set_xticks(indices_of_fall_quarters)
-        ax.set_xticklabels(xtick_labels, rotation='45')
-        
-    def year_from_strm(self, strm):
-        return self.strm_computer.strm2AcadPeriod(strm)
-
-    def get_partial_course_list(self, course_list, max_num_courses):
-        '''
-        Given course name list, return a string listing the first few
-        names, adding ellipses if needed. Example: return 'Math104,CS105,CS107...'
-        
-        @param course_list: list of course names
-        @type course_list: [str]
-        @param max_num_courses: maximum number of courses to list
-        @type max_num_courses: int
-        '''
-        partial_course_list = course_list[:min(max_num_courses,len(course_list))]
-        partial_courses_str = ','.join(partial_course_list)
-        # Add ellipses if needed:
-        if len(course_list) > len(partial_course_list):
-            partial_courses_str += '...'
-        return partial_courses_str
-
-
     #------------------------------------- Interval Class ----------------
     
 class Interval(object):
