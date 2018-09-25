@@ -69,8 +69,8 @@ class DifficultyPlotter(object):
         # Plot detail only if few enough courses
         # are included to plot
         if course_list is not None:
-            stats_summary_dict = self.compute_avg_effort_all_offerings(stats_dict)
-            self.plot_difficulty_details(ax_difficulty_detail, stats_summary_dict)
+            avg_over_offerings_dict = self.compute_avg_effort_all_offerings(stats_dict)
+            self.plot_difficulty_details(ax_difficulty_detail, avg_over_offerings_dict)
             
         plt.tight_layout()
         # Make a bit of room above the subplots
@@ -82,7 +82,7 @@ class DifficultyPlotter(object):
     # plot_difficulty_details 
     #------------------
     
-    def plot_difficulty_details(self, ax_diff_sum, stats_dict):
+    def plot_difficulty_details(self, ax_diff_sum, stats_summary_dict):
         '''
         Plot the stacked bar chart of student percentages who
         responded with low, med, med_hi, high, or v_high. One
@@ -91,16 +91,28 @@ class DifficultyPlotter(object):
         
         @param ax_diff_sum: axes to plot into
         @type ax_diff_sum: matplotlib.Axes
-        @param stats_dict: map evalunitid to CourseStats obj
-        @type stats_dict: {str : CourseStats
+        @param stats_summary_dict: Map course_name to CourseStats objects
+        @type stats_summary_dict: {str : CourseStats}
         '''
+        # Turn the dict into a Pandas dataframe, b/c those have
+        # built-in stacked bar charts:
         
-        difficulties_df = self.make_diffs_low_v_high_dataframe(stats_dict)
-
+        difficulty_perc_df = pd.DataFrame()
+        for course_stats_obj in stats_summary_dict.values():
+            low,med,med_hi,high,v_high1,v_high2,v_high3,v_high4 = course_stats_obj.summary_dict.values()
+            v_high = sum([v_high1,v_high2,v_high3,v_high4])
+            next_row = pd.Series([low,med,med_hi,high,v_high],
+                                 index=['low','med','med_hi','high','v_high'],
+                                 name=course_stats_obj['course_name']
+            )
+            print(next_row)
+        
+            difficulty_perc_df = difficulty_perc_df.append(next_row)
+        
         ax_diff_sum.set_xlabel('Percent of student-reported difficulty')
         
         # Have Pandas do the plotting into the already prepared subplot:
-        difficulties_df.plot.barh(stacked=True, ax=ax_diff_sum)
+        difficulty_perc_df.plot.barh(stacked=True, ax=ax_diff_sum)
         
         plt.legend(loc='center left', bbox_to_anchor=(1.0, 0.5))
         
@@ -126,7 +138,8 @@ class DifficultyPlotter(object):
         the courses to include in the student responses. Could be all
         courses, or some small list of them.
         
-        Number of courses is used only in the Y-axis label. If None,****
+        Number of courses is used only in the Y-axis label. If None,
+        all courses are included.
         
         @param ax_difficulty_histogram: the Axes instance to plot on
         @type ax_difficulty_histogram: Axes
@@ -176,7 +189,7 @@ class DifficultyPlotter(object):
         @rtype Pandas.DataFrame()
         '''
     
-        course_names = [summary_obj['course_name'] for summary_obj in stats_dict.values()]
+        course_names = [summary_obj['crse_code'] for summary_obj in stats_dict.values()]
     
         # Get 1-d difficulty percentages: perc for difficulty level 1 of all courses in one row,
         #                                 perc for difficulty level 2 of all courses in next row,
@@ -211,14 +224,17 @@ class DifficultyPlotter(object):
         # for each course to have only one percentage for each course. The 'axis=1' below
         # ensures the row-wise addition (rather than col-wise, or all):
         
-        difficulties = {'low'     : pd.Series(low_difficulties, index=course_names),
-                        'med'     : pd.Series(med_difficulties, index=course_names),
-                        'med_hi'  : pd.Series(med_hi_difficulties, index=course_names),
-                        'high'    : pd.Series(high_difficulties, index=course_names),
-                        'v_high'  : df_for_collapsing.sum(axis=1)
-                        }
-        difficulties_df = pd.DataFrame(difficulties, index=course_names)
-        return difficulties_df    
+        diff_compressed_dict = {'low'     : pd.Series(low_difficulties, index=course_names),
+                                'med'     : pd.Series(med_difficulties, index=course_names),
+                                'med_hi'  : pd.Series(med_hi_difficulties, index=course_names),
+                                'high'    : pd.Series(high_difficulties, index=course_names),
+                                'v_high'  : df_for_collapsing.sum(axis=1)
+                                }
+        difficulties_compressed_df = pd.DataFrame(diff_compressed_dict, index=course_names)
+        
+        difficulties_full_range_df = pd.concat([difficulties_compressed_df, df_for_collapsing], sort=False)
+        
+        return (difficulties_compressed_df, difficulties_full_range_df)
         
     #--------------------------------
     # compute_weekly_effort 
@@ -294,20 +310,25 @@ class DifficultyPlotter(object):
             raise ValueError("Course not found from %s" % course_list)
         
         crse_dict = self.init_course_dict(evalunitid, termcore, crse_code, hour_response)
+        
+        try: 
+            for crse_code, termcore, evalunitid, hour_response in cur:
                 
-        for crse_code, termcore, evalunitid, hour_response in cur:
-            if evalunitid != curr_evalunitid:
-                # Brand new course starting. Sew up previous crse,
-                # if it has more than 10 students, else ignore for
-                # privacy:
-                if crse_dict['num_students'] > 10:
-                    stats_dict[evalunitid] = CourseStats(crse_dict)
-                    crse_dict = self.init_course_dict(evalunitid, termcore, crse_code, hour_response)
-                curr_evalunitid = evalunitid
-                continue
-            crse_dict['num_students'] += 1
-            crse_dict[CourseStats.diff_level(hour_response)] += 1
-
+                if evalunitid != curr_evalunitid:
+                    # Brand new course starting. Sew up previous crse,
+                    # if it has more than 10 students, else ignore for
+                    # privacy:
+                    if crse_dict['num_students'] > 10:
+                        stats_dict[curr_evalunitid] = CourseStats(crse_dict)
+                        crse_dict = self.init_course_dict(evalunitid, termcore, crse_code, hour_response)
+                    curr_evalunitid = evalunitid
+                    continue
+                crse_dict['num_students'] += 1
+                crse_dict[CourseStats.diff_level(hour_response)] += 1
+        finally:
+            # Add the last one we were working on when 
+            # we ran out of db results:
+            stats_dict[evalunitid] = CourseStats(crse_dict)
         return stats_dict              
         
     #--------------------------------
@@ -315,6 +336,18 @@ class DifficultyPlotter(object):
     #------------------
     
     def compute_avg_effort_all_offerings(self, stats_dict):
+        '''
+        Given a dict {evalunitid : CourseStats objects},
+        return a new dict with summary statistics:
+          o Avg number of 'votes' for each difficulty level across all offerings.
+          o List of termcores when course was offered.
+        The returned obj behaves more or less like a dict, and 
+        provides metho percent_by_difficulty() 
+        
+        @param stats_dict: map evalunitid to CourseStats objs, one for each offering
+            of every class
+        @type stats_dict: {str : CourseStats}
+        '''
         
         # Create a *set* of course names (therefore the curlies, instead
         # of the usual list comprehension square brackets):
@@ -445,23 +478,6 @@ class CourseStats(object):
     DIFF_LEVEL7 = Interval()
     DIFF_LEVEL8 = Interval()
     
-    col_names = [
-				 'crse_code',         
-				 'termcore',
-				 'evalunitid',
-				 'avg_hrs',
-				 'std_hrs',
-				 'adjusted_avg_hrs',
-				 'all_offerings_lt_5_hrs',
-				 'all_offerings_rng_5_10_hrs',
-				 'all_offerings_rng_10_15_hrs',
-				 'all_offerings_rng_15_20_hrs',
-				 'all_offerings_rng_20_25_hrs',
-				 'all_offerings_rng_25_30_hrs',
-				 'all_offerings_rng_30_35_hrs',
-                 'all_offerings_gt_35_hrs'
-                 ]        
-    
     #--------------------------------
     # Constructor 
     #------------------
@@ -526,7 +542,7 @@ class CourseStats(object):
 
     def __getitem__(self, key):
         return self.stats[key]
-            
+    
     #--------------------------------
     # iter 
     #------------------
@@ -771,7 +787,12 @@ class CourseSummaryStats(object):
 if __name__ == '__main__':
     #DifficultyPlotter(['CS 106A', 'CS 106B', 'CS 106X'])        
     #DifficultyPlotter(['CS 106A', 'CS 106B', 'CS 106X', 'CS 140'])        
-    DifficultyPlotter(['CS 140'])
+    #DifficultyPlotter(['CS 140'])
+    #DifficultyPlotter(['CS 106X'])
+    #DifficultyPlotter(['CS 106A'])
+    #DifficultyPlotter(['CS 106B'])
+    #DifficultyPlotter(['CS 140', 'CS 231N'])
+    DifficultyPlotter(['CS 045N'])
     
     # Test single course not found (missing space between Math and 104):
     #DifficultyPlotter(['MATH104'])
