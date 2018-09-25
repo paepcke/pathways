@@ -5,6 +5,7 @@ Created on Aug 28, 2018
 '''
 from _collections import OrderedDict
 import os
+import re
 import sqlite3
 
 import matplotlib.pyplot as plt
@@ -16,6 +17,10 @@ class DifficultyPlotter(object):
     classdocs
     '''
     
+    COURSE_NAME_SPLIT_DEP_NUM_PATTERN   = re.compile(r'([^0-9]*)(.*)')
+    COURSE_NAME_HAS_3DIGITS_PATTERN = re.compile(r'[0-9]{3}')
+
+    
     def __init__(self, course_list, block=True):
         '''
         Constructor
@@ -26,6 +31,13 @@ class DifficultyPlotter(object):
             self.sqlite_db_conn = sqlite3.connect(self.db_file)
         except Exception as e:
             raise ValueError("Could not connect ot Sqlite3 db at '%s' (%s)" % (self.db_file, repr(e)))
+        
+        # Make sure that course names are canonicalized
+        # i.e. have a space between, for instance, 'CS' and '140'.
+        # Else evals dbs can't find the courses:
+        if course_list is not None:
+            course_list = [self.canonicalize_course_name(crse_nm) for crse_nm in course_list]
+        
         
         # Initialize the course stats class:
         CourseStats.__init_class__()
@@ -105,8 +117,6 @@ class DifficultyPlotter(object):
                                  index=['low','med','med_hi','high','v_high'],
                                  name=course_stats_obj['course_name']
             )
-            print(next_row)
-        
             difficulty_perc_df = difficulty_perc_df.append(next_row)
         
         ax_diff_sum.set_xlabel('Percent of student-reported difficulty')
@@ -427,6 +437,46 @@ class DifficultyPlotter(object):
         crse_dict[CourseStats.diff_level(hour_response)] = 1
         return crse_dict
     
+    #--------------------------------
+    # canonicalize_course_name 
+    #------------------
+    
+    def canonicalize_course_name(self, crs_nm):
+        '''
+        Given a course name like 'CS140' return 
+        the name with a space between the number and 
+        the department: 'CS 140'.
+        
+        @param crs_nm:
+        @type crs_nm:
+        '''
+        # Split name into department and catalog number parts:
+        match_obj = DifficultyPlotter.COURSE_NAME_SPLIT_DEP_NUM_PATTERN.search(crs_nm)
+        if match_obj is None:
+            # Just leave the name alone: 
+            return crs_nm
+        else:
+            # Groups will be like: ('CS', '140').
+            # Save that tuple
+            dep, catalog_nbr = match_obj.groups()
+
+        # There also need to be three digits for
+        # the catalog nbr:
+        match_obj = DifficultyPlotter.COURSE_NAME_HAS_3DIGITS_PATTERN.search(catalog_nbr)
+        if match_obj is None:
+            # Catalog nbr does not have 3 digits:
+            catalog_nbr = '0' + catalog_nbr
+            # Does catalog number now have 3 digits? 
+            # (Not the length, digits, b/c it could
+            # be CS1N
+            match_obj = DifficultyPlotter.COURSE_NAME_HAS_3DIGITS_PATTERN.search(catalog_nbr)
+            if match_obj is None:
+                # Nope, need another leading zero:
+                catalog_nbr = '0' + catalog_nbr
+        
+        crse_nm = ' '.join([dep.strip(), catalog_nbr.strip()])
+        return crse_nm
+        
     #------------------------------------- Interval Class ----------------
     
 class Interval(object):

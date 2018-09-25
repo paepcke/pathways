@@ -20,7 +20,7 @@ import functools
 import itertools
 from logging import error as logErr
 from logging import info as logInfo
-from logging import warn as logWarn
+from logging import warning as logWarn
 import logging
 import math
 import os
@@ -31,8 +31,12 @@ import sys
 from threading import Timer
 import time
 
-from matplotlib import artist
 import matplotlib
+# Backend spec must be before pyplot import!
+#matplotlib.use('TkAgg')
+matplotlib.use('Qt5Agg')
+
+from matplotlib import artist
 from matplotlib.path import Path
 
 from fast_dot_retrieval.fast_dot_retrieval import DotManager
@@ -45,14 +49,7 @@ from pathways.common_classes import Message
 from pathways.course_sim_analytics import CourseSimAnalytics
 from pathways.course_vector_creation import CourseVectorsCreator
 from pathways.enrollment_plotter import EnrollmentPlotter
-
-
-# Backend spec must be before pyplot import!
-#matplotlib.use('TkAgg')
-matplotlib.use('Qt5Agg')
-
-
-
+from pathways.difficulty_plotter import DifficultyPlotter
 
 #from pathways.Old.tsne_viz_process import TsneViz
 
@@ -1170,6 +1167,33 @@ class TSNECourseVisualizer(object):
         curr_text += '\n'
         return curr_text
      
+    #--------------------------------
+    # sort_crs_desc_html 
+    #------------------
+     
+    def sort_crs_desc_html(self, html_txt):
+        '''
+        Given an html list of course names with descriptions,
+        return a new html string in which the entries are
+        sorted by course name: Example input:
+        
+           '<b>MATH54</b> Linear algebra<br>...<br>'
+        
+        @param html_txt:
+        @type html_txt:
+        '''
+        # Get each line as a string item in an array:
+        html_txt_arr = html_txt.split('<br>')
+        
+        # Sort the array. The search keys are the course
+        # names, which are before a space in each line:
+        html_txt_arr_sorted = sorted(html_txt_arr,
+                                     key=lambda course_desc: course_desc[:course_desc.find(' ')]
+                           )
+        # Reconstruct string, putting <br>s back in:
+        html_txt = '<br>'.join(html_txt_arr_sorted)
+        return html_txt
+        
     #--------------------------
     # restart 
     #----------------
@@ -1395,9 +1419,20 @@ class TSNECourseVisualizer(object):
             # Notify the main thread, and from there the control surface
             # to update the control surface's course list panel:
             if len(new_text) > 0:
+                # Sort the courses by alpha:
+                new_text = self.sort_crs_desc_html(new_text)
+                
                 self.out_queue.put(Message('update_crse_board', new_text))
+                # Raise the enrollment history char:
                 EnrollmentPlotter(self, course_names, block=False)
-        
+                # Raise the difficulty overview charts:
+                try:
+                    DifficultyPlotter(course_names, block=False)
+                except ValueError:
+                    # Don't have evals of effort requirements for any
+                    # of the courses (e.g. Law):
+                    self.control_board_error('No intensity info on any of the circled courses') 
+                
         self.ax_tsne.get_figure().canvas.draw_idle()
             
             
@@ -2321,37 +2356,6 @@ class PseudoDotArtist(object):
         '''
         return [self.coords]
 
-#******************************************************* Likely not needed.   
-# def start_viz(vector_creator,  #@UnusedVariable
-#               in_queue=None, 
-#               out_queue=None, 
-#               fittedModelFileName=None,
-#               standalone=False,
-#               draftMode=True):
-#     
-#     TSNECourseVisualizer.status = 'newplot'
-#     
-#     while True:
-#         if TSNECourseVisualizer.status == 'newplot':
-#             TSNECourseVisualizer.status = 'running'
-#             # Will hang until someone calls plt.close(<figNum>).
-#             # Depending on how they set TSNECourseVisualizer.status we
-#             # either make a new figure, or quit: 
-#             try:
-#                 visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
-#                                                   in_queue=in_queue, 
-#                                                   out_queue=out_queue, 
-#                                                   fittedModelFileName=fittedModelFileName,
-#                                                   draftMode=draftMode,
-#                                                   standalone=standalone)
-#             except RestartRequest as exit_request:
-#                 #*******
-#                 print('Visualizer creation returned: %s' % exit_request)
-#                 #*******
-#             continue
-#         else:
-#             sys.exit(0)
-#*******************
 
 
 # ----------------------------------------------- Main -------------------
