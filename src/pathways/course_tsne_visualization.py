@@ -87,7 +87,7 @@ class DotSizeFactor(object):
     HUGE_FACTOR      = 1.001
 
     MAX_DOT_SIZE     = 300 # Max size of any one dot
-    EDGE_WIDTH       = 1.0  # Width of black edge around 
+    EDGE_WIDTH       = 0.5  # Width of black edge around 
                             # dots whose size was capped.
     
     num_dots         = 0    # Remember num dots we are called with.
