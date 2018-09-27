@@ -3,7 +3,6 @@ Created on Sep 25, 2018
 
 @author: paepcke
 '''
-from _datetime import date
 import datetime
 import os
 import sqlite3

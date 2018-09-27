@@ -9,7 +9,6 @@ from gensim.models.keyedvectors import KeyedVectors
 
 from course2vec.word2vec_model_creation import Word2VecModelCreator 
 
-
 class StudentFocusAnalyzer(object):
     '''
     classdocs
@@ -37,7 +36,7 @@ class StudentFocusAnalyzer(object):
 
         model_creator = Word2VecModelCreator()
         self.sentences = model_creator.create_course_sentences(training_filename, hasHeader=True)
-        self.vector_sds = self.compute_sds()
+        self.course_sds = self.compute_sds()
         
     def compute_sds(self):
 
