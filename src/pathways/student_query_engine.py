@@ -4,11 +4,11 @@ Created on Sep 25, 2018
 @author: paepcke
 '''
 from _datetime import date
+import datetime
 import os
 import sqlite3
 
 from pathways.strmComputer import StrmComputer
-from matplotlib._cm import _summer_data
 
 
 class StudentQueryEngine(object):
@@ -85,12 +85,20 @@ class StudentQueryEngine(object):
     #------------------
     
     def all_given_year(self, year):
+        '''
+        Given an academic year, find all students and their courses
+        in that academic year. For 2018/19, use 2019!
+        
+        @param year: yr2 calendar year of the yr1/yr2 academic-year 
+        @type year: integer
+        '''
         
         # Find low and high strm for given year.
         # Earliest is Fall quarter:
         acad_year = year - 1
-        fall_quarter_date = date('%s-9-28' % acad_year)
-        fall_quarter_next_year = date('%s-9-28' % acad_year + 1)
+        
+        fall_quarter_date = datetime.date(acad_year, 9, 29) 
+        fall_quarter_next_year = datetime.date(acad_year + 1, 9, 29)
         low_strm  = self.strm_computer.strm_from_date(fall_quarter_date)
         high_strm = self.strm_computer.strm_from_date(fall_quarter_next_year)
         
@@ -124,20 +132,37 @@ class StudentQueryEngine(object):
             raise IOError("Query failure: '%s' (%s)" % (query_str, repr(e)))
         return cur
     
-    #---------------------- DbIterator -------
-    
-class DbIterator(sqlite3.Cursor):
-    
-    def next(self):
-        return self.fetchone()
-        
     #---------------------- Main ------------
     
 if __name__ == '__main__':
     
     qe = StudentQueryEngine()
     res_it = qe.all_stud_crses_strms()
-    for row_num in range(3):
+    for row_num in range(2):
         row = res_it.fetchone()
-        #print(row)
+        if row_num == 0:
+            assert(row == ('$2a$15$.bENtpoUdOJRTw7Kg/Bjr.qlKv0FwR9k5OMLrNjaN6MlBi3sTxBj6', 'CME211', '1182'))
+        elif row_num == 1:
+            assert(row == ('$2a$15$.bENtpoUdOJRTw7Kg/Bjr.qlKv0FwR9k5OMLrNjaN6MlBi3sTxBj6', 'CME212', '1184'))
+    print("All student courses: Passed")
+    
+    res_it = qe.stud_crse_lists(['$2a$15$.bENtpoUdOJRTw7Kg/Bjr.qlKv0FwR9k5OMLrNjaN6MlBi3sTxBj6'])
+    assert(res_it.fetchone() == ('$2a$15$.bENtpoUdOJRTw7Kg/Bjr.qlKv0FwR9k5OMLrNjaN6MlBi3sTxBj6', 'CME211', '1182'))
+    print("Courses for one student list: Passed")
+    
+    res_it = qe.stud_crse_lists(['$2a$15$.bENtpoUdOJRTw7Kg/Bjr.qlKv0FwR9k5OMLrNjaN6MlBi3sTxBj6',
+                                 '$2a$15$.iQPCHeeuyLD3TIqJRk4j.LU0IjGYumSdFkAEUfOoKEtk2jT/bFoi'
+                                 ])
+    #for row in res_it:
+    #    print(row)
+    
+    res_it = qe.all_given_year(2017)
+    for row_num in range(2):
+        row = res_it.fetchone()
+        if row_num == 0:
+            assert(row ==  ('$2a$15$/s/sUcLiiDWgLVZKf/cvyunB9knF7k2VpORq0SiOzkjm6Kc/iISfK', 'BIOE300B')) 
+        elif row_num == 1:
+            assert(row == ('$2a$15$/s/sUcLiiDWgLVZKf/cvyunB9knF7k2VpORq0SiOzkjm6Kc/iISfK', 'BIOE301A'))
+    print("All student given year: Passed")
+
         
