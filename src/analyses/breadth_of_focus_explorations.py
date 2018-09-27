@@ -14,6 +14,10 @@ class StudentFocusAnalyzer(object):
     classdocs
     '''
 
+    #--------------------------------
+    # Constructor 
+    #------------------
+
 
     def __init__(self, training_filename, model_vector_filename):
         '''
@@ -32,7 +36,6 @@ class StudentFocusAnalyzer(object):
         #    [major1, course5, course1, ...],        <== student2
         #         ...
         #   ]
-        
 
         model_creator = Word2VecModelCreator()
         self.sentences = model_creator.create_course_sentences(training_filename, hasHeader=True)
@@ -55,7 +58,11 @@ class StudentFocusAnalyzer(object):
         print('Num courses of second CS student: %s' % len(vectors_by_majors['CS-BS'][1]))
                 
         
-    def vectors_from_courses(self):
+    #--------------------------------
+    # course_vector_by_majors 
+    #------------------
+        
+    def course_vectors_by_majors(self):
         '''
         Returns dictionary mapping majors to array of lists of
         course vectors. Each course list in the array contains KeyedVectors.
@@ -133,11 +140,6 @@ class Student(object):
     def num_vectors(self):
         return len(self.course_vectors)
     
-    def sd(self):
-        
-    
-     
-
 
 if __name__ == '__main__':
     
