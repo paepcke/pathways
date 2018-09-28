@@ -52,3 +52,17 @@ Files for building the course2vec model since 2000.
   Used in course_sim_analytics.py: cross_listings_verification() to
   check whether a model properly predicts the crosslists as the
   nearest courses.
+
+- File sentences_file.txt:
+  the file that is fed to the neural net during vector training:
+
+      major,crse1,crse2,...
+
+  where each line is the major and courses-taken of one student.
+
+  To re-create that file, use the crs_major_strm_gt10_2000plus.csv,
+  and program word2vec_model_creation.py:
+
+  python word2vec_model_creation.py --action create_sentences_file \
+                                    --file .../data/Word2vec/emplid_crs_major_strm_gt10_2000plus.csv
+                                    --savefile .../data/Word2vec/sentences_file.txt

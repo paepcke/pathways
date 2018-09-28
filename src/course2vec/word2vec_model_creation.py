@@ -27,7 +27,7 @@ class Action(Enum):
     SAVE_MODEL = 2
     SAVE_WORD_VECTORS = 3
     CREATE_MODEL = 4
-    CREATE_SENTENCES = 5
+    CREATE_SENTENCES_FILE = 5
     EVALUATE = 6
     OPTIMIZE_MODEL = 7
     
@@ -110,7 +110,12 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             cross_lists_filename  = saveFileName 
             self.sentences = self.create_course_sentences(training_set_filename, hasHeader=hasHeader)            
             self.optimize_model(self.sentences, cross_lists_filename, hasHeader=hasHeader)
-            
+        elif action == Action.CREATE_SENTENCES_FILE:
+            emplid_crs_major_strm_file = actionFileName
+            sentences = self.create_course_sentences(emplid_crs_major_strm_file, hasHeader=hasHeader)
+            with open(saveFileName, 'w') as fd:
+                for sentence in sentences:
+                    fd.write(','.join(sentence) + '\n')            
         else:
             raise ValueError("Bad action indicator: '%s' % action")
             
@@ -228,6 +233,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         @return: array of array representing the training sentences
         @rtype: [[str,str,str,...],[str,str...]...] 
         '''
+        csv_fd = None
         
         if id_strm_crse_filename.endswith('.sqlite'):
             try:
@@ -250,8 +256,8 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                 raise ValueError("Could not query Sqlite3 db '%s' (%s)" % (id_strm_crse_filename, repr(e)))                
         else:
             try:
-                fd = open(id_strm_crse_filename, 'r')
-                reader = csv.reader(fd)
+                csv_fd = open(id_strm_crse_filename, 'r')
+                reader = csv.reader(csv_fd)
             except Exception as e:
                 raise ValueError("Could not open csv file '%s' (%s)" % (id_strm_crse_filename, repr(e)))                
         try:
@@ -279,7 +285,17 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                     # More courses for current student:
                     curr_sentence.append(coursename)
         finally:
-            reader.close()
+            try:
+                # If reader is a db:
+                reader.close()
+            except AttributeError:
+                try:
+                    # Oh well, guess it wasn't a db. In that
+                    # case close the file underlying the csv 
+                    # reader:
+                    csv_fd.close()
+                except Exception:
+                    pass
             
         self.logInfo('Done creating sentences from enrollments.')
         return sentences
@@ -776,7 +792,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]), formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-a', '--action',
                         type=str,
-                        choices=['create_model', 'load_model', 'load_vectors', 'save_model', 'evaluate', 'optimize_model'],
+                        choices=['create_model', 'load_model', 'load_vectors', 'save_model', 'evaluate', 'optimize_model', 'create_sentences_file'],
                         help="what you want the program to do.", 
                         default=None);
     parser.add_argument('-f', '--file',
@@ -805,7 +821,9 @@ if __name__ == '__main__':
     else:
         model_filename   = args.file
     
-    if os.path.exists(args.savefile):
+    # Be on the save side: if the requested save destination
+    # exists and is not empty, balk:
+    if os.path.exists(args.savefile) and os.stat(args.savefile).st_size > 0:
         raise ValueError("Savefile '%s' exists; please remove it first." % args.savefile)
     
     # Create filename in same dir as model, but w/ extension .vectors:
@@ -859,3 +877,18 @@ if __name__ == '__main__':
     
     
         print('Results are in %s' % args.savefile)
+
+    elif args.action == 'create_sentences_file':
+        if args.file is None or not os.path.exists(args.file):
+            raise ValueError("Must provide .csv with student ID, course, major, and strm.")
+        if args.savefile is None:
+            raise ValueError("Must provide filename for to save sentences to.")
+        
+        wordvec_creator = Word2VecModelCreator(
+            action=Action.CREATE_SENTENCES_FILE,
+            actionFileName=args.file,
+            saveFileName=args.savefile
+            )
+        print('Sentences (i.e. training set) are in %s' % args.savefile)
+        
+    

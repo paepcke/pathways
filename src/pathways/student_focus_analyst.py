@@ -59,33 +59,64 @@ class StudentFocusAnalyst(object):
         
     def course_sds(self, student):
         '''
-        Given the emplid of one student:
+        Return a Pandas Series instance. It's elements are
+        the element-wise SDs of all the given student's courses.
+        The length of the returned vector will thus equal the
+        number of courses that the student has taken.
+        
+        The student can either be specified by their string ID,
+        or by a DataFrame. The DataFrame must have the following
+        form:
+        
+         DataFrame for a student who took three courses:
+                                        crs_vec_el1   crs_vec_el2   crs_vec_el3,...
+                            course1                   ...
+                            course2                   ...
+                            course3                   ...
+        
+        Each element in the result vector will be the SD of
+        one course's crs_vec_el1, ..., crs_vec_el<n>
+        
+        Given the string ID of one student (if DataFrame is given,
+        skip to next part):
             o find his/her courses,
-            o look up each course's course vector
+            o gather up each course's course vector
+            o make a DataFrame of the result.
+        
+        Given a DataFrame:
             o compute the element-wise standard deviations
-                of all vectors
+                of all vectors (i.e. course rows)
             o return Pandas Series instance of the SDs. The length of
               the series will be equal to the number courses
               the student took.
                
         @param student: identifier of student
-        @type student: str
-        @return: vector of element-wise standard deviations
+        @type student: {str | pandas.Series }
+        @return: Series of element-wise standard deviations
         @rtype: pandas.Series
         '''
         
-        # Method stud_crse_lists() returns rows of the form:
-        #    emplid, course_name, strm
-        # Get all the student's courses in one array:
+        if isinstance(student, str):
+            # Must find student's courses and the corresponding vectors:
+            # Method stud_crse_lists() returns rows of the form:
+            #    emplid, course_name, strm
+            
+            course_names = [row[1] for row in self.student_db.stud_crse_lists([student]).fetchall()]
+            # Create a 2D df:
+            #                    vecDim1    vecDim2  ... vedDim200
+            #    course_name1
+            #    course_name2        ...         ...
+            course_vectors = DataFrame([self.vectors[course_name] for course_name in course_names],
+                                       index=course_names
+                                       )
+        else:
+            # Were passed a DF, rename it to
+            # match what the previous branch produces:
+            course_vectors = student
+
+        # Now we have a dataframe, whether constructed above, 
+        # or passed in as the student argument:
         
-        course_names = [row[1] for row in self.student_db.stud_crse_lists([student]).fetchall()]
-        # Create a 2D df:
-        #                    vecDim1    vecDim2  ... vedDim200
-        #    course_name1
-        #    course_name        ...         ...
-        course_vectors = DataFrame([self.vectors[course_name] for course_name in course_names],
-                                   index=course_names
-                                   )
         # Get a vector in which each of the 200 elements
         # is the standard deviation of one column. I.e.
         # [(std of vecDim1), (std of vecDim2), etc. ]
@@ -114,8 +145,34 @@ class StudentFocusAnalyst(object):
     #------------------
 
     def student_breadth_l2(self, student):
+        '''
+        If student is a student ID, find that student's 
+        course vectors, and return the student's overall
+        (in this case L2) breadth.
+        
+        Method also accepts a DataFrame containing the course
+        vectors of the courses taken by one student:
+        
+         DataFrame for a student who took three courses:
+                                        crs_vec_el1   crs_vec_el2   crs_vec_el3,...
+                            course1                   ...
+                            course2                   ...
+                            course3                   ...
+                     
+        If a dataframe is provided, no access to the database
+        occurs. 
+        
+        @param student: a student entity: either a student ID, or 
+            a student's set of courses.
+        @type student: {str | pandas.DataFrame}
+        '''
+        # Method course_sds() will return a Series with the 
+        # element-wise SDs of all courses. The method takes
+        # a student ID or prepared DF of course vectors.
+        # We then take the L2 norm of that series.
+        
         return self.L2_norm(self.course_sds(student))
-
+                
     # ---------------------------------- Main ------------------------------
     
 if __name__ == '__main__':
