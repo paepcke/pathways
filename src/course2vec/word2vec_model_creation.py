@@ -55,7 +55,8 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                  saveFileName=None, 
                  hasHeader=False, 
                  low_strm=None, 
-                 high_strm=None):
+                 high_strm=None,
+                 acad_careers_list=None):
         '''
         Constructor
         '''
@@ -111,7 +112,9 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             self.optimize_model(self.sentences, cross_lists_filename, hasHeader=hasHeader)
         elif action == Action.CREATE_SENTENCES_FILE:
             emplid_crs_major_strm_file = actionFileName
-            sentences = self.create_course_sentences(emplid_crs_major_strm_file, hasHeader=hasHeader)
+            sentences = self.create_course_sentences(emplid_crs_major_strm_file, 
+                                                     hasHeader=hasHeader,
+                                                     acad_careers_list)
             with open(saveFileName, 'w') as fd:
                 for sentence in sentences:
                     fd.write(','.join(sentence) + '\n')            
@@ -122,7 +125,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     # create_model 
     #----------------
         
-    def create_model(self, training_set, vec_size=150, win_size=10, save_name_prefix=None):
+    def create_model(self, training_set, vec_size=150, win_size=10, acad_careers=None, save_name_prefix=None):
         
         self.logInfo("Start creating model...")
         # build vocabulary and train model
@@ -214,7 +217,12 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     # create_course_sentences 
     #----------------
 
-    def create_course_sentences(self, id_strm_crse_filename, hasHeader=False, low_strm=None, high_strm=None):
+    def create_course_sentences(self, 
+                                id_strm_crse_filename, 
+                                hasHeader=False, 
+                                low_strm=None, 
+                                high_strm=None,
+                                acad_careers=None):
         '''
         Given a course info file, create a list of lists that
         can be used as input sentences for word2vec. 
@@ -250,6 +258,9 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         @type low_strm: int
         @param high_strm: upper exclusive bound of strm included.
         @type high_strm: int
+        @param acad_careers: list of academic careers to include: UG, MED, LAW, etc.
+            Default: include all.
+        @type acad_careers: {None | (str)}
         @return: array of array representing the training sentences
         @rtype: [[str,str,str,...],[str,str...]...] 
         '''
@@ -261,14 +272,18 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             except Exception as e:
                 raise ValueError("Could not open Sqlite3 db '%s' (%s)" % (id_strm_crse_filename, repr(e)))
             reader = conn.cursor()
-            where_clause = '' if low_strm is None and high_strm is None else 'WHERE '
+            where_clause = '' if low_strm is None and high_strm is None and acad_careers is None else 'WHERE '
             if low_strm is not None:
                 where_clause += "strm >= %s" % low_strm
-                if high_strm is not None:
+                if high_strm is not None or acad_careers is not None:
                     where_clause += ' and '
             if high_strm is not None:
                 where_clause += 'strm < %s' % high_strm
-            
+                if acad_careers is not None:
+                    where_clause += ' and '
+            if acad_careers is not None:
+                where_clause += "acad_career in (%s)" % \
+                    ','.join(["'" + acad_career + "'" for acad_career in acad_careers])
             try:    
                 reader.execute("SELECT * FROM emplid_crs_major_strm_gt10_2000plus" + where_clause + ' ORDER BY emplid'+ ';')
             except Exception as e:
@@ -284,7 +299,11 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             sentences = []
             curr_emplid   = None
             curr_sentence = None
+
             #*************
+            # Just for safety against unordered emplids:
+            # ensure no dups outside of single, legitimitely
+            # ordered emplids group: 
             emplid_dup_check = {}
             #*************
             
@@ -847,6 +866,11 @@ if __name__ == '__main__':
                         type=int,                        
                         help='highest integer strm (exclusive) to use during model training. Only used for create_model',
                         default=None);
+    parser.add_argument('--acad_career',
+                        action='append',
+                        help="Name of academic careers to include (e.g. UG, MED, LAW). Use multiple times as needed. \n" +
+                             "If left out, all careers are included.",
+                        default=None);
     parser.add_argument('--hasHeader',
                         type=int,                        
                         help='whether action file has a column name header (relevant for .csv files): 1/0. Default: 0',
@@ -865,7 +889,7 @@ if __name__ == '__main__':
     
     # Be on the save side: if the requested save destination
     # exists and is not empty, balk:
-    if os.path.exists(args.savefile) and os.stat(args.savefile).st_size > 0:
+    if args.savefile is not None and os.path.exists(args.savefile) and os.stat(args.savefile).st_size > 0:
         raise ValueError("Savefile '%s' exists; please remove it first." % args.savefile)
     
     # Create filename in same dir as model, but w/ extension .vectors:
@@ -889,7 +913,8 @@ if __name__ == '__main__':
             saveFileName=args.savefile,
             hasHeader=True if not args.file.endswith('.sqlite') else False,
             low_strm=args.low_strm,
-            high_strm=args.high_strm
+            high_strm=args.high_strm,
+            acad_careers=args.acad_career
             )
         print("Model file: '%s';\nVector file: '%s'" % (wordvec_creator.model_filename,
                                                         wordvec_creator.wv_filename)
