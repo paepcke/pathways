@@ -94,11 +94,10 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             self.word_vectors = self.load_word_vectors(vector_file)
             return
         elif action == Action.CREATE_MODEL:
-            id_strm_crse_filename = actionFileName
-            self.sentences = self.create_course_sentences(id_strm_crse_filename,  # csv of sqlite3 filename 
-                                                          hasHeader=hasHeader, 
-                                                          low_strm=low_strm, 
-                                                          high_strm=high_strm)
+            sentences_filename = actionFileName
+            self.sentences = self.load_sentences(sentences_filename,
+                                                 hasHeader=hasHeader
+                                                 ) 
             self.model = self.create_model(self.sentences)
             (self.model_filename, self.wv_filename) = self.save(saveFileName)
         elif action == Action.EVALUATE:
@@ -195,6 +194,22 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
         
         return word_vector_obj
     
+    #--------------------------------
+    # import_sentences 
+    #------------------
+    
+    def load_sentences(self, sentence_filename, hasHeader=True):
+
+        res_arr_of_arr = []
+        with open(sentence_filename, 'r') as sentence_fd:
+            csv_reader = csv.reader(sentence_fd)
+            if hasHeader:
+                # Throw out the column name header:
+                next(csv_reader)
+            for sentence in csv_reader:
+                res_arr_of_arr.append(sentence)
+        return res_arr_of_arr
+    
     #--------------------------
     # create_course_sentences 
     #----------------
@@ -202,22 +217,27 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     def create_course_sentences(self, id_strm_crse_filename, hasHeader=False, low_strm=None, high_strm=None):
         '''
         Given a course info file, create a list of lists that
-        can be used as input sentences for word2vec. Input file
-        expected:
+        can be used as input sentences for word2vec. 
+        
+        Expected input format:
         
 			"emplid","coursename","major","acad_career","strm"
 			"$2b$...1123","MED300A","MED-MD","MED","1016"
 			"$2b$...Uq24","MED300A","MED-MD","MED","1014"
 			"$2b$...Ux35","SURG300A","MED-MD","MED","1012"
 			"$2b$...Urk3","PEDS300A","MED-MD","MED","1012"
-			
+			       			
 		If the file has extension .sqlite it is assumed to be an
 		sqlite file with the same schema as the csv file layout.
 		In this case the hasHeader argument is ignored. Instead,
 		the low_strm and high_strm args are considered. The low_strm
 		is an optional lower bound (inclusive) of the strm(s) included.
 		And high_strm is the upper (exclusive) bound. If either is None,
-		no bound is imposed in the respective (or both) directions.  
+		no bound is imposed in the respective (or both) directions.
+		
+		NOTE: if using a .csv file for input, it MUST be ordered by
+		      emplid! If using an sqlite3 table, the query below
+		      takes care of that.  
 			            
 		Each sentences will be the concatenation of one student's 
 		course names, and their major.	            
@@ -250,7 +270,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                 where_clause += 'strm < %s' % high_strm
             
             try:    
-                reader.execute("SELECT * FROM EnrollmentTallyAllCols " + where_clause + ';')
+                reader.execute("SELECT * FROM emplid_crs_major_strm_gt10_2000plus" + where_clause + ' ORDER BY emplid'+ ';')
             except Exception as e:
                 reader.close()
                 raise ValueError("Could not query Sqlite3 db '%s' (%s)" % (id_strm_crse_filename, repr(e)))                
@@ -264,6 +284,9 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             sentences = []
             curr_emplid   = None
             curr_sentence = None
+            #*************
+            emplid_dup_check = {}
+            #*************
             
             if hasHeader and not id_strm_crse_filename.endswith('.sqlite'):
                 # Ignore header in CSV:
@@ -277,10 +300,25 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                         # Finished with one student, add finished sentence
                         # to sentences list:
                         sentences.append(curr_sentence)
+                        #*************
+                        # We've seen the emplid we just processed:
+                        emplid_dup_check[curr_emplid] = True
+                        #*************
+                        
                     # Start a new sentence with this student's
                     # first course:
                     curr_sentence = [major, coursename]
+                    #*************
+                    # Make sure there are no emplid duplicates other
+                    # than the ones that are clustered together:
+                    try:
+                        assert(emplid_dup_check.get(emplid, None) is None)
+                    except AssertionError:
+                        print('Assertion error.')
+                        raise
+                    #*************                    
                     curr_emplid   = emplid
+                    
                 else:
                     # More courses for current student:
                     curr_sentence.append(coursename)
@@ -809,6 +847,10 @@ if __name__ == '__main__':
                         type=int,                        
                         help='highest integer strm (exclusive) to use during model training. Only used for create_model',
                         default=None);
+    parser.add_argument('--hasHeader',
+                        type=int,                        
+                        help='whether action file has a column name header (relevant for .csv files): 1/0. Default: 0',
+                        default=0);
                         
                         
     args = parser.parse_args();
@@ -882,12 +924,13 @@ if __name__ == '__main__':
         if args.file is None or not os.path.exists(args.file):
             raise ValueError("Must provide .csv with student ID, course, major, and strm.")
         if args.savefile is None:
-            raise ValueError("Must provide filename for to save sentences to.")
+            raise ValueError("Must provide filename for to where to save sentences.")
         
         wordvec_creator = Word2VecModelCreator(
             action=Action.CREATE_SENTENCES_FILE,
             actionFileName=args.file,
-            saveFileName=args.savefile
+            saveFileName=args.savefile,
+            hasHeader=args.hasHeader
             )
         print('Sentences (i.e. training set) are in %s' % args.savefile)
         

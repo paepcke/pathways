@@ -5,8 +5,11 @@ Created on Sep 11, 2018
 '''
 import csv
 import os
+import pickle
 
 from gensim.models.keyedvectors import KeyedVectors
+from pandas.core.frame import DataFrame
+from pandas.core.series import Series
 
 from course2vec.word2vec_model_creation import Word2VecModelCreator 
 from pathways.student_focus_analyst import StudentFocusAnalyst
@@ -155,7 +158,7 @@ class StudentFocusExplorer(object):
         #              ]
         #    {major2 : [[...],
         #               [...]
-        vectors_by_majors = self.vectors_from_courses()
+        vectors_by_majors = self.course_vectors_by_majors()
         #print(vectors_by_majors['CS-BS'][:6])
         #print(vectors_by_majors['CS-BS'][0])
         print('Num majors: %s' % len(vectors_by_majors.keys()))
@@ -221,32 +224,49 @@ class StudentFocusExplorer(object):
                 
         student_vectors = {}
         
-        # Each sentence holds the major and courses of one
-        # student. A sentence is a list beginning with with
-        # major, followed by course names:
+        # Each sentence (i.e. row in self.sentences) holds 
+        # the major and courses of one student. A sentence 
+        # is a list beginning with with major, followed by 
+        # course names:
          
         for student_courses in self.sentences:
             # The first element is the student's major
             major = student_courses[0]
 
-            # Get the vector arrays collected so far for this major:
-            vectors_already_in_major = student_vectors.get(major, [])
+            # Get the list of student-dfs collected so far for this major,
+            # starting a new list if this is the first time we see
+            # this major:
+            student_dfs_already_in_major = student_vectors.get(major, [])
+            if len(student_dfs_already_in_major) == 0:
+                student_vectors[major] = student_dfs_already_in_major
 
             # Find vector of each course of the current student,
-            # and add the resulting vector array to the major's
-            # already existing array:
-            this_student_course_vectors = []
+            # and add the resulting vector array to the student's
+            # dataframe:
+            this_student_course_vec = []
+            this_student_included_courses = []
             for student_course in student_courses[1:]:
                 try:
-                    this_student_course_vectors.append(word_vectors[student_course])
+                    # word_vectors[course_name] returns a 1d array,
+                    # which is that course's vector:
+                    this_student_course_vec.append(word_vectors[student_course])
+                    this_student_included_courses.append(student_course)
                 except KeyError:
                     # Courses with fewer than 10 students aren't in the
-                    # set for privacy preservation. Just go to next course.
+                    # vectors for privacy preservation. Just go to next course.
                     continue
-            vectors_already_in_major.append(this_student_course_vectors)
+            # Done with all courses of one student: append
+            # the df to the Python array of this major:
+            this_student_course_df = DataFrame.from_records(this_student_course_vec, 
+                                                            index=this_student_included_courses)
             
-            # The append likely happens in place, but to be sure:
-            student_vectors[major] = vectors_already_in_major
+            # Set a name for what each row represents: the
+            # vector for of one student's courses. The rows
+            # will be auto-numbered:
+            
+            this_student_course_df.index.name = 'CourseVector'
+            student_dfs_already_in_major.append(this_student_course_df)
+            
         return student_vectors
 
     # ---------------------------------- Utilities ----------
@@ -254,13 +274,16 @@ class StudentFocusExplorer(object):
     # import_sentences 
     #------------------
     
-    def import_sentences(self, sentence_filename):
+    def import_sentences(self, sentence_filename, hasHeader=True):
 
         res_arr_of_arr = []
         with open(sentence_filename, 'r') as sentence_fd:
             csv_reader = csv.reader(sentence_fd)
+            if hasHeader:
+                # Throw out the column name header:
+                next(csv_reader)
             for sentence in csv_reader:
-                res_arr_of_arr.append(sentence.split(','))
+                res_arr_of_arr.append(sentence)
         return res_arr_of_arr
     #---------------------------------- Class Student --------------
     
@@ -326,5 +349,6 @@ if __name__ == '__main__':
     
     # Test1:
     breadth_20_students = explorer.compute_majors_breadths_l2()
-    majors_vectors = explorer.course_vectors_by_majors()     
-    print(majors_vectors)
+    with open('/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/Word2vec/breadth_20_students.pickle', 'wb') as fd:
+        pickle.dump(breadth_20_students, fd)
+        
