@@ -3,9 +3,12 @@ Created on Sep 11, 2018
 
 @author: paepcke
 '''
+import argparse
 import csv
+import logging
 import os
 import pickle
+import sys
 
 from gensim.models.keyedvectors import KeyedVectors
 from pandas.core.frame import DataFrame
@@ -60,6 +63,9 @@ class StudentFocusExplorer(object):
         @param model_vector_filename: name of file with vectors for all courses
         @type model_vector_filename: str
         '''
+        
+        logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
+
         self.sentences_filename = sentences_filename
         self.id_strm_crse_filename = id_strm_crse_filename
         self.model_vector_filename = model_vector_filename
@@ -90,6 +96,102 @@ class StudentFocusExplorer(object):
             
         # Get service instance that computes norms, etc.:
         self.student_vec_analyst = StudentFocusAnalyst()
+        
+        # Dict mapping majors to data frames. Each df holds
+        # one student's vectors for each of their courses:
+        # a course_name x vector matrix:
+        self._majors_student_dfs_dict = None
+        
+        # Dict mapping each major to a 1D array of SDs.
+        # Each SD is the breadth of one student in that major:
+        self._majors_sds_dict         = None
+        
+        # Used for arbitrary set of students' list of SDs.
+        self._curr_student_sds        = None
+
+    # ----------------------------------------- Properties -----------------------
+    
+    
+    #--------------------------------
+    # majors_student_dfs_dict 
+    #------------------
+    
+    @property
+    def majors_student_dfs_dict(self):
+        return self._majors_student_dfs_dict
+    
+    #--------------------------------
+    # majors_sds_dict 
+    #------------------
+    
+    @property
+    def majors_sds_dict(self):
+        return self._majors_sds_dict
+    
+    
+    #--------------------------------
+    # curr_student_sds 
+    #------------------
+    
+    @property
+    def curr_student_sds(self):
+        return self._curr_student_sds
+    
+    # ----------------------------------------- Loading Pre-Computed Data Structures ----------
+    
+    #--------------------------------
+    # load_majors_student_dfs 
+    #------------------
+    
+    def load_majors_student_dfs(self, loadfile):
+        '''
+        Given the path to a pickle file that was created by 
+        the course_vectors_by_majors() method, recover the
+        data structure into instance var self._majors_student_dfs_dict.
+        
+        For the structure details, see course_vectors_by_majors()
+
+        @param loadfile: path to pickle file to load from
+        @type loadfile: str
+        '''
+        
+        try:
+            with open(loadfile, 'rb') as pickle_fd:
+                self.logInfo('Loading majors->student course vectors from file...')
+                self._majors_student_dfs_dict = pickle.load(pickle_fd)
+                self.logInfo('Done loading majors->student course vectors from file...')
+        except Exception as e:
+            raise IOError("Could not load majors-to-student-DFs file '%s' (%s)" %\
+                          (loadfile, repr(e))
+                          )
+
+    #--------------------------------
+    # load_majors_sds 
+    #------------------
+    
+    def load_majors_sds(self, loadfile):
+        '''
+        Given the path to a pickle file that was created by 
+        the compute_majors_sds() method, recover the
+        data structure into instance var self._majors_sds_dict.
+        
+        For the structure details, see compute_majors_sds()
+        
+        @param loadfile: path to pickle file to load from
+        @type loadfile: str
+        '''
+        
+        try:
+            with open(loadfile, 'rb') as pickle_fd:
+                self.logInfo('Loading majors->student-SDs from file...')
+                self._majors_sds_dict = pickle.load(pickle_fd)
+                self.logInfo('Done loading majors->student-SDs from file...')
+        except Exception as e:
+            raise IOError("Could not load majors-SDs file '%s' (%s)" %\
+                          (loadfile, repr(e))
+                          )
+
+    # ------------------------------------------ Computing Data Structures --------------
         
     #--------------------------------
     # compute_students_breadths_l2 
@@ -127,6 +229,9 @@ class StudentFocusExplorer(object):
         length will thus be the length of the student_list, which 
         is the number of students of interest to the caller:
         
+        In addition to returning the result, saves result into instance
+        var self._curr_student_sds
+        
         @param student_list: array of one dataframe for each student.
             Each student_specification holds the vectors for the courses taken by that student.
         @type student_list: [DataFrame]
@@ -135,6 +240,8 @@ class StudentFocusExplorer(object):
         
         '''
         res_vec = []
+        num_students = len(student_list)
+        self.logInfo("Computing each of %d students' SD..." % num_students) 
         # Get one student's DF at a time:
         for student_specification in student_list:
             # Get a 1D of the SDs across the course vectors of
@@ -142,7 +249,10 @@ class StudentFocusExplorer(object):
             course_sd_vec = self.student_vec_analyst.course_sds(student_specification)
             # Collapse the SD vector into an L2 norm:
             res_vec.append(self.student_vec_analyst.L2_norm(course_sd_vec))
-            
+        
+        self.logInfo("Done computing each of %d students' SD..." % num_students)
+        
+        self._curr_student_sds = res_vec             
         return res_vec
             
     #--------------------------------
@@ -150,21 +260,46 @@ class StudentFocusExplorer(object):
     #------------------
         
     def compute_majors_breadths_l2(self):
-
-        # Create dict:
-        #    {major1 : [DataFrame_student1,
-        #               DataFrame_student2,
-        #                   ...
-        #              ]
-        #    {major2 : [[...],
-        #               [...]
+        '''
+        Create dict:
+           {major1 : Series([SD_Student1, SD_Student2, ...])
+            major2 : Series([SD_Student3, SD_Student4, SD_Student5...])
+                   ...
+           }
+           
+        In addition to returning the resulting data structure, saves 
+        the structure in self._majors_sds_dict
+        
+        @return: dict mapping majors to lists of student-SDs
+        @rtype: {str : Series(float)}
+              
+        '''
+        
+        # Get dict major ==> DataFrame([courses x course_vectors]):
         vectors_by_majors = self.course_vectors_by_majors()
-        #print(vectors_by_majors['CS-BS'][:6])
-        #print(vectors_by_majors['CS-BS'][0])
-        print('Num majors: %s' % len(vectors_by_majors.keys()))
-        print('Num CS-BS students: %s' % len(vectors_by_majors['CS-BS']))
-        print('Num courses of first CS student: %s' % len(vectors_by_majors['CS-BS'][0]))
-        print('Num courses of second CS student: %s' % len(vectors_by_majors['CS-BS'][1]))
+        
+        majors_SDs = {}
+        self.logInfo("Computing each major's SD for each student in that major...")
+        for major in vectors_by_majors.keys():
+
+            self.logInfo("   ...major %s..." % major)
+            
+            student_sd_array = []
+            # Get this major's array of student DFs.
+            # Each df has one student's course x course_vector:
+            for student_course_df in vectors_by_majors[major]:
+                # Get one student's SD from their DF:
+                student_sd = self.student_vec_analyst.course_sds(student_course_df)
+                # And add to the SDs of students in the current major:
+                student_sd_array.append(student_sd)
+            # Make a 1D array (i.e. Series). Name the series
+            # the name of the major, just so it can be identified
+            # as reflecting the current major's SDs. Add to the result:
+            majors_SDs[major] = Series(student_sd_array).rename(major)
+            
+        self.logInfo("Done computing each major's SD for each student in that major.")
+        self._majors_sds_dict = majors_SDs
+        return majors_SDs
                 
         
     #--------------------------------
@@ -211,6 +346,9 @@ class StudentFocusExplorer(object):
                     ] # End study sets for all Bio students
             }
         
+        In addition to returning the resulting data structure, saves 
+        the structure in self._majors_student_dfs_dict.
+        
         @return: dictonary keyed by majors. The values are Dataframes
             holding the course vectors for one student. The returned
             quantity is suitable for passing to student_breadth_l2()
@@ -228,10 +366,13 @@ class StudentFocusExplorer(object):
         # the major and courses of one student. A sentence 
         # is a list beginning with with major, followed by 
         # course names:
-         
+        
+        self.logInfo("Gathering course vectors for each student in each major...")
         for student_courses in self.sentences:
             # The first element is the student's major
             major = student_courses[0]
+            
+            self.logInfo("   ...major: %s" % major)
 
             # Get the list of student-dfs collected so far for this major,
             # starting a new list if this is the first time we see
@@ -266,7 +407,10 @@ class StudentFocusExplorer(object):
             
             this_student_course_df.index.name = 'CourseVector'
             student_dfs_already_in_major.append(this_student_course_df)
-            
+
+        self.logInfo("Done gathering course vectors for each student in each major.")
+        
+        self._majors_student_dfs_dict = student_vectors        
         return student_vectors
 
     # ---------------------------------- Utilities ----------
@@ -282,9 +426,26 @@ class StudentFocusExplorer(object):
             if hasHeader:
                 # Throw out the column name header:
                 next(csv_reader)
+            self.logInfo("Loading sentences (i.e. training vectors)...")
             for sentence in csv_reader:
                 res_arr_of_arr.append(sentence)
+                
+        self.logInfo("Done loading sentences (i.e. training vectors).")                
         return res_arr_of_arr
+    
+    #--------------------------
+    # logging convenience methods 
+    #----------------
+                
+    def logInfo(self, msg):
+        logging.info(msg)
+        
+    def logWarn(self, msg):
+        logging.warning(msg)
+    
+    def logDebug(self, msg):
+        logging.debug(msg)
+    
     #---------------------------------- Class Student --------------
     
 class Student(object):
@@ -310,8 +471,83 @@ class Student(object):
     def num_vectors(self):
         return len(self.course_vectors)
     
-
 if __name__ == '__main__':
+    
+    curr_dir = os.path.dirname(__file__)
+    
+    parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]), formatter_class=argparse.RawTextHelpFormatter)
+    
+    parser.add_argument('-a', '--action',
+                        type=str,
+                        choices=['create_majors_vectors',
+                                 'create_majors_sds', 
+                                 'test'
+                                 ],
+                        nargs='*',
+                        help="what you want the program to do.", 
+                        default=None);
+    parser.add_argument('-f', '--file',
+                        help='fully qualified path to majors vectors/SDs load file, depending on requested action',
+                        default=None);
+    parser.add_argument('-s', '--savefile',
+                        help='fully qualified path to file for saving result depending on requested action',
+                        default=None);
+    
+    args = parser.parse_args();
+    
+    curr_dir = os.path.dirname(__file__)
+    save_dir = os.path.join(curr_dir, '../data/Word2vec/')
+    
+    # The enrollment data:
+    # training_filename      = os.path.join(save_dir, 'emplid_crs_major_strm_gt10_2000plus.csv')
+    sentences_filename     = os.path.join(save_dir, 'sentences.txt')
+    model_vector_filename  = os.path.join(save_dir, 'winning_model.vectors')
+
+    explorer = StudentFocusExplorer(sentences_filename=sentences_filename, 
+                                    model_vector_filename=model_vector_filename)
+    
+    if 'create_majors_vectors' in args.action:
+        # Make sure caller got us a file name to save to:
+        if args.file is None:
+            raise ValueError("Must provide a file name for the computed majors vectors.")
+        
+        # Make sure the file name has a .pickle extension:
+        (name_root, ext) = os.path.splitext(args.savefile)
+        if ext != '.pickle':
+            savefile = args.safefile + '.pickle'
+        else:
+            savefile = args.savefile
+        
+        # Get dict majors --> array of DataFrames (course x vectors),
+        # each DF for one student:
+        majors_student_dfs = explorer.course_vectors_by_majors()
+        
+        # Have our explorer instance remember the result, in case
+        # caller also asked for computation of SDs:
+        explorer._majors_student_dfs_dict = majors_student_dfs
+        
+        with open(savefile, 'wb') as fd:
+            pickle.dump(majors_student_dfs, fd)
+        print("Majors student DFs are in %s" % savefile)
+        
+    elif 'create_vector_sds' in args.action:
+        # Have we already computed the majors-->course-vector-DFs?
+        if explorer._majors_student_dfs_dict is None:
+            # No, but did user provide a load file for the majors-->student-DFs?
+            if args.file is not None:
+                explorer.load_majors_student_dfs(args.file)
+            else:
+                # Bite the bullet and spend 10 minutes on a coffee:
+                explorer._majors_student_dfs_dict = explorer.course_vectors_by_majors()
+        
+        explorer._majors_sds_dict = explorer.compute_majors_breadths_l2()
+
+    elif 'test' in args.action:
+        pass
+        
+        
+        
+    
     
     # Test IDs of 20 students:
     test_ids = [
@@ -336,19 +572,9 @@ if __name__ == '__main__':
                 '$2b$15$UhY288tdIX.Y5AyqBvNjvuqVfClViJMG4vBq3UwekcZ7IxLo4mwFS',
                 '$2b$15$zuUVsUfThqAGfsBvdHJPWOPL/gDO5U.oC83.hR.zb9Zht2P6/33pC',
                 ]    
-    curr_dir = os.path.dirname(__file__)
-    save_dir = os.path.join(curr_dir, '../data/Word2vec/')
-    
-    # The enrollment data:
-    # training_filename      = os.path.join(save_dir, 'emplid_crs_major_strm_gt10_2000plus.csv')
-    sentences_filename     = os.path.join(save_dir, 'sentences.txt')
-    model_vector_filename  = os.path.join(save_dir, 'winning_model.vectors')
-
-    explorer = StudentFocusExplorer(sentences_filename=sentences_filename, 
-                                    model_vector_filename=model_vector_filename)
-    
+     
     # Test1:
     breadth_20_students = explorer.compute_majors_breadths_l2()
-    with open('/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/Word2vec/breadth_20_students.pickle', 'wb') as fd:
+    with open('/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/Word2vec/TestData/breadth_20_students.pickle', 'wb') as fd:
         pickle.dump(breadth_20_students, fd)
         

@@ -47,7 +47,7 @@ class StudentFocusAnalyst(object):
 
     def student_group_breadth_l2(self, student_list):
         
-        # Get a list of the L2 norms that summary 
+        # Get a list of the L2 norms that summarize 
         # each student's course breadth:
         
         l2_sd_norms = [self.student_breadth_l2(student) for student in student_list]

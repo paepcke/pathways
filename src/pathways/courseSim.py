@@ -3,10 +3,12 @@ Created on Aug 19, 2018
 
 @author: paepcke
 '''
+import argparse
 from multiprocessing import Process, Queue
+import multiprocessing
 import os
 from queue import Empty  # The regular queue's empty exception
-from test.support import multiprocessing
+import sys
 from time import sleep
 
 from pathways.common_classes import Message
@@ -21,7 +23,9 @@ class TsneCourseExplorer(object):
     '''
     QUEUE_LISTEN_TIME = 0.2 # seconds
     
-    def __init__(self):
+    def __init__(self,
+                 draft_mode=True,
+                 vector_file=None):
         '''
         '''
         
@@ -43,12 +47,15 @@ class TsneCourseExplorer(object):
         control_surface_process.start()
 
         self.vector_creator = CourseVectorsCreator() 
-        self.vector_creator.load_word2vec_model(os.path.join(data_dir, 'best_modelvec250_win15.model'))
+        if vector_file is None:
+            self.vector_creator.load_word2vec_model(os.path.join(data_dir, 'best_modelvec250_win15.model'))
+        else:
+            self.vector_creator.load_word2vec_model(vector_file)
  
         # Start in draft mode for speedy viz appearance:
         # (standalone <== False is added in the start_tsne_process()
         # method):
-        self.start_tsne_process({'draft_mode' : True})
+        self.start_tsne_process({'draft_mode' : draft_mode})
         
         # Await ready-signal from viz:
         msg = self.tsne_viz_from_queue.get(block=True)
@@ -149,7 +156,21 @@ class TsneCourseExplorer(object):
             self.control_surface_to_queue.put(Message(msg_code, state))
     
 if __name__ == '__main__':
+    curr_dir = os.path.dirname(__file__)
+    
+    parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]), formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('-f', '--file',
+                        help='fully qualified path to model file. Default is best model that includes all academic careers.',
+                        default=None);
+    parser.add_argument('-m', '--draftMode',
+                        choices=['true', 'false'],
+                        help='whether or not to show model in draft mode, or full quality. Default is full.',
+                        default='true');
+    
+    args = parser.parse_args();
+                        
     multiprocessing.set_start_method('spawn')
-    TsneCourseExplorer()
+    TsneCourseExplorer(vector_file=args.file,
+                       draft_mode=True if args.draftMode == 'true' else False)
 #     #tsne_similarity_explorer = TsneCourseSimExplorer()
     #sys.exit(tsne_similarity_explorer.app.exec_())

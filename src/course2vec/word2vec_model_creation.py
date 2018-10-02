@@ -56,7 +56,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                  hasHeader=False, 
                  low_strm=None, 
                  high_strm=None,
-                 acad_careers_list=None):
+                 acad_careers=None):
         '''
         Constructor
         '''
@@ -114,7 +114,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             emplid_crs_major_strm_file = actionFileName
             sentences = self.create_course_sentences(emplid_crs_major_strm_file, 
                                                      hasHeader=hasHeader,
-                                                     acad_careers_list)
+                                                     acad_careers=acad_careers)
             with open(saveFileName, 'w') as fd:
                 for sentence in sentences:
                     fd.write(','.join(sentence) + '\n')            
@@ -125,7 +125,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     # create_model 
     #----------------
         
-    def create_model(self, training_set, vec_size=150, win_size=10, acad_careers=None, save_name_prefix=None):
+    def create_model(self, training_set, vec_size=150, win_size=10, save_name_prefix=None):
         
         self.logInfo("Start creating model...")
         # build vocabulary and train model
@@ -272,7 +272,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             except Exception as e:
                 raise ValueError("Could not open Sqlite3 db '%s' (%s)" % (id_strm_crse_filename, repr(e)))
             reader = conn.cursor()
-            where_clause = '' if low_strm is None and high_strm is None and acad_careers is None else 'WHERE '
+            where_clause = '' if low_strm is None and high_strm is None and acad_careers is None else ' WHERE '
             if low_strm is not None:
                 where_clause += "strm >= %s" % low_strm
                 if high_strm is not None or acad_careers is not None:
@@ -955,7 +955,8 @@ if __name__ == '__main__':
             action=Action.CREATE_SENTENCES_FILE,
             actionFileName=args.file,
             saveFileName=args.savefile,
-            hasHeader=args.hasHeader
+            hasHeader=args.hasHeader,
+            acad_careers=args.acad_career
             )
         print('Sentences (i.e. training set) are in %s' % args.savefile)
         
