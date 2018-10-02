@@ -268,7 +268,13 @@ class StudentFocusExplorer(object):
            }
            
         In addition to returning the resulting data structure, saves 
-        the structure in self._majors_sds_dict
+        the structure in self._majors_sds_dict.
+        
+        Method first checks whether self._majors_student_dfs_dict is
+        set. If not, self.course_vectors_by_majors() is called (about 10mins).
+        The instance var can be set by first calling load_majors_student_dfs()
+        with the path to a previously pickled result of what course_vectors_by_majors()
+        produces.
         
         @return: dict mapping majors to lists of student-SDs
         @rtype: {str : Series(float)}
@@ -276,13 +282,16 @@ class StudentFocusExplorer(object):
         '''
         
         # Get dict major ==> DataFrame([courses x course_vectors]):
-        vectors_by_majors = self.course_vectors_by_majors()
+        if self._majors_student_dfs_dict is None:
+            vectors_by_majors = self.course_vectors_by_majors()
+        else:
+            vectors_by_majors = self._majors_student_dfs_dict
         
         majors_SDs = {}
         self.logInfo("Computing each major's SD for each student in that major...")
         for major in vectors_by_majors.keys():
 
-            self.logInfo("   ...major %s..." % major)
+            self.logDebug("   ...major %s..." % major)
             
             student_sd_array = []
             # Get this major's array of student DFs.
@@ -372,7 +381,7 @@ class StudentFocusExplorer(object):
             # The first element is the student's major
             major = student_courses[0]
             
-            self.logInfo("   ...major: %s" % major)
+            self.logDebug("   ...major: %s" % major)
 
             # Get the list of student-dfs collected so far for this major,
             # starting a new list if this is the first time we see
@@ -508,7 +517,7 @@ if __name__ == '__main__':
     
     if 'create_majors_vectors' in args.action:
         # Make sure caller got us a file name to save to:
-        if args.file is None:
+        if args.savefile is None:
             raise ValueError("Must provide a file name for the computed majors vectors.")
         
         # Make sure the file name has a .pickle extension:
@@ -520,17 +529,18 @@ if __name__ == '__main__':
         
         # Get dict majors --> array of DataFrames (course x vectors),
         # each DF for one student:
-        majors_student_dfs = explorer.course_vectors_by_majors()
-        
-        # Have our explorer instance remember the result, in case
-        # caller also asked for computation of SDs:
-        explorer._majors_student_dfs_dict = majors_student_dfs
+        explorer._majors_student_dfs_dict = explorer.course_vectors_by_majors()
         
         with open(savefile, 'wb') as fd:
-            pickle.dump(majors_student_dfs, fd)
+            pickle.dump(explorer.majors_student_dfs_dict, fd)
         print("Majors student DFs are in %s" % savefile)
         
-    elif 'create_vector_sds' in args.action:
+    elif 'create_majors_sds' in args.action:
+        # Make sure there is a savefile specified, else the whole
+        # computation happens, but is not saved
+        if args.savefile is None:
+            raise ValueError("Must provide a file name for the computed majors SDs.")
+         
         # Have we already computed the majors-->course-vector-DFs?
         if explorer._majors_student_dfs_dict is None:
             # No, but did user provide a load file for the majors-->student-DFs?
@@ -542,39 +552,45 @@ if __name__ == '__main__':
         
         explorer._majors_sds_dict = explorer.compute_majors_breadths_l2()
 
+        with open(args.savefile, 'wb') as fd:
+            pickle.dump(explorer.majors_sds_dict, fd)
+            
+        print("Majors student SDs are in %s" % args.savefile)
+
+
     elif 'test' in args.action:
         pass
         
         
         
     
-    
-    # Test IDs of 20 students:
-    test_ids = [
-                '$2b$15$CDsZ1FN2duAmJSNQWMgUoecvcraUwYuRWpxOUM1EBmib4JCMHUxqq',
-                '$2b$15$0FI1Dm8nyfrbDbL6HX5XNui41cqM48EEpJ0deqikq4jaQyfh1Na8.',
-                '$2b$15$jDMQFgaTO4YW.saEwvWm7./yCB./attA3PCEz8QAoNSROxCAQLBjm',
-                '$2b$15$toydgDvebRVo.IHNesrx7u9m9XidcCwsOUcfgO9DC8A5Ch8VQpMpG',
-                '$2b$15$TWK.su2jX5x5PJs4Ky25uuEOhJCtB8G1jzfC8X0tSo0azeeGECWqy',
-                '$2b$15$Q5nnEU..JzR7M4UG1Dx6sOAzKjgHaQebAnkIa.IxaeI0XJ9DSRnLC',
-                '$2b$15$EFAXEr/X/NST9tB6D6A3Eehj085YFY7oRyjZ6myQITx6R53v5udT6',
-                '$2b$15$zeD0/FfVR87ZIewKphM3Zu/Xj4vw4.IZuJILedCzdvPSYq1lTBdRi',
-                '$2b$15$/LwePtb3PMqkl0/p3nkU/evJZ92ahPzrS726Thejvpd0jiFEkohmK',
-                '$2b$15$6di3VOeCW6mW6kf1mzgXU.gukM7YKRkrKoL//1RKiYsJ55YQdcr9G',
-                '$2b$15$kGLUl1W/9NjH2O7WGg7WL.KFaTQqe/5eBuYRWJi1Hk3u4/lEgd/py',
-                '$2b$15$iwJOkr807bdE3Wl52B3U7OgK3IkcKiPvNgF05P6x1qqFERw7.Xoj2',
-                '$2b$15$4sXQ/ivtodFGt44oZlnKbuadr8YAUcIJNv7nb3WC0ob73.Xfc4RTC',
-                '$2b$15$x2v8t6TNPvEtKf5kZNtOR.MAACkad58.3S4eX2D4lRMHQYOikfEna',
-                '$2b$15$agPd01KuHh.iu2monC65..dKG43ZBNwo5aFNYXpwAfQNEh56nEWDi',
-                '$2b$15$SPWY3c0w3AmRVQM7h7kvWeUiS/W.15LwP.LJlnoLJIRpEIK2YSTPy',
-                '$2b$15$D5R5lIWq/AoNd3ElqY1cNO6xj91k6P9sUo/8OX03WXRAkFcXc0Zzu',
-                '$2b$15$3CF37AfoRkDzm5yj5tpifORC3n6RN.maxHnb1h5Rhfo3RLbRO.moS',
-                '$2b$15$UhY288tdIX.Y5AyqBvNjvuqVfClViJMG4vBq3UwekcZ7IxLo4mwFS',
-                '$2b$15$zuUVsUfThqAGfsBvdHJPWOPL/gDO5U.oC83.hR.zb9Zht2P6/33pC',
-                ]    
-     
-    # Test1:
-    breadth_20_students = explorer.compute_majors_breadths_l2()
-    with open('/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/Word2vec/TestData/breadth_20_students.pickle', 'wb') as fd:
-        pickle.dump(breadth_20_students, fd)
+#     
+#     # Test IDs of 20 students:
+#     test_ids = [
+#                 '$2b$15$CDsZ1FN2duAmJSNQWMgUoecvcraUwYuRWpxOUM1EBmib4JCMHUxqq',
+#                 '$2b$15$0FI1Dm8nyfrbDbL6HX5XNui41cqM48EEpJ0deqikq4jaQyfh1Na8.',
+#                 '$2b$15$jDMQFgaTO4YW.saEwvWm7./yCB./attA3PCEz8QAoNSROxCAQLBjm',
+#                 '$2b$15$toydgDvebRVo.IHNesrx7u9m9XidcCwsOUcfgO9DC8A5Ch8VQpMpG',
+#                 '$2b$15$TWK.su2jX5x5PJs4Ky25uuEOhJCtB8G1jzfC8X0tSo0azeeGECWqy',
+#                 '$2b$15$Q5nnEU..JzR7M4UG1Dx6sOAzKjgHaQebAnkIa.IxaeI0XJ9DSRnLC',
+#                 '$2b$15$EFAXEr/X/NST9tB6D6A3Eehj085YFY7oRyjZ6myQITx6R53v5udT6',
+#                 '$2b$15$zeD0/FfVR87ZIewKphM3Zu/Xj4vw4.IZuJILedCzdvPSYq1lTBdRi',
+#                 '$2b$15$/LwePtb3PMqkl0/p3nkU/evJZ92ahPzrS726Thejvpd0jiFEkohmK',
+#                 '$2b$15$6di3VOeCW6mW6kf1mzgXU.gukM7YKRkrKoL//1RKiYsJ55YQdcr9G',
+#                 '$2b$15$kGLUl1W/9NjH2O7WGg7WL.KFaTQqe/5eBuYRWJi1Hk3u4/lEgd/py',
+#                 '$2b$15$iwJOkr807bdE3Wl52B3U7OgK3IkcKiPvNgF05P6x1qqFERw7.Xoj2',
+#                 '$2b$15$4sXQ/ivtodFGt44oZlnKbuadr8YAUcIJNv7nb3WC0ob73.Xfc4RTC',
+#                 '$2b$15$x2v8t6TNPvEtKf5kZNtOR.MAACkad58.3S4eX2D4lRMHQYOikfEna',
+#                 '$2b$15$agPd01KuHh.iu2monC65..dKG43ZBNwo5aFNYXpwAfQNEh56nEWDi',
+#                 '$2b$15$SPWY3c0w3AmRVQM7h7kvWeUiS/W.15LwP.LJlnoLJIRpEIK2YSTPy',
+#                 '$2b$15$D5R5lIWq/AoNd3ElqY1cNO6xj91k6P9sUo/8OX03WXRAkFcXc0Zzu',
+#                 '$2b$15$3CF37AfoRkDzm5yj5tpifORC3n6RN.maxHnb1h5Rhfo3RLbRO.moS',
+#                 '$2b$15$UhY288tdIX.Y5AyqBvNjvuqVfClViJMG4vBq3UwekcZ7IxLo4mwFS',
+#                 '$2b$15$zuUVsUfThqAGfsBvdHJPWOPL/gDO5U.oC83.hR.zb9Zht2P6/33pC',
+#                 ]    
+#      
+#     # Test1:
+#     breadth_20_students = explorer.compute_majors_breadths_l2()
+#     with open('/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/Word2vec/TestData/breadth_20_students.pickle', 'wb') as fd:
+#         pickle.dump(breadth_20_students, fd)
         
