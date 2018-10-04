@@ -7,7 +7,8 @@ import argparse
 import csv
 import logging
 import os
-import pickle
+import _pickle as pickle
+#****import pickle
 import sys
 
 from gensim.models.keyedvectors import KeyedVectors
@@ -137,7 +138,7 @@ class StudentFocusExplorer(object):
     def curr_student_sds(self):
         return self._curr_student_sds
     
-    # ----------------------------------------- Loading Pre-Computed Data Structures ----------
+    # ----------------------------------------- Loading Pre-Computed Data Structures and Exports ----------
     
     #--------------------------------
     # load_majors_student_dfs 
@@ -190,6 +191,39 @@ class StudentFocusExplorer(object):
             raise IOError("Could not load majors-SDs file '%s' (%s)" %\
                           (loadfile, repr(e))
                           )
+
+    #--------------------------------
+    # export_majors_sds 
+    #------------------
+
+    def export_majors_sds(self, savefile, majors_list=None):
+        '''
+        Writes majors_sds to a file as CSV. Each column will be all 
+           m
+        #######
+        @param savefile:
+        @type savefile:
+        '''
+        if majors_list is None:
+            # Want all:
+            majors_sds_subset = self.majors_sds_dict()
+        else:
+            # Want only the SD lists for some majors:
+            majors_sds_subset = dict([ (k, list(self._majors_sds_dict.get(k, None).values)) for k in majors_list ])
+            
+        export_df = DataFrame.from_records(majors_sds_subset)
+        self.logInfo("Writing majors_sds for %s majors to file..." % len(majors_list))
+#         export_df.to_csv(savefile, 
+#                          sep=",", 
+#                          na_rep="null", 
+#                          header=majors_list, 
+#                          index_label='Breadth', 
+#                          quoting=csv.QUOTE_MINIMAL
+#                          )
+        export_df.to_csv(savefile, 
+                         header=majors_list, 
+                         ) 
+        self.logInfo("Done writing majors_sds for %s majors to file." % len(majors_list))        
 
     # ------------------------------------------ Computing Data Structures --------------
         
@@ -380,6 +414,8 @@ class StudentFocusExplorer(object):
         for student_courses in self.sentences:
             # The first element is the student's major
             major = student_courses[0]
+            if major == "\\N":
+                major = 'UNDECL'
             
             self.logDebug("   ...major: %s" % major)
 
@@ -455,6 +491,26 @@ class StudentFocusExplorer(object):
     def logDebug(self, msg):
         logging.debug(msg)
     
+    #--------------------------------
+    # prep_majors_sd_creation 
+    #------------------
+    
+    def prep_majors_sd_creation(self, savefile, student_dfs_file=None):
+        # Make sure there is a savefile specified, else the whole
+        # computation happens, but is not saved
+        if savefile is None:
+            raise ValueError("Must provide a file name for the computed majors SDs.")
+         
+        # Have we already computed the majors-->course-vector-DFs?
+        if explorer._majors_student_dfs_dict is None:
+            # No, but did user provide a load file for the majors-->student-DFs?
+            if student_dfs_file is not None:
+                self.load_majors_student_dfs(student_dfs_file)
+            else:
+                # Bite the bullet and spend 10 minutes on a coffee:
+                self._majors_student_dfs_dict = self.course_vectors_by_majors()
+
+    
     #---------------------------------- Class Student --------------
     
 class Student(object):
@@ -490,6 +546,7 @@ if __name__ == '__main__':
                         type=str,
                         choices=['create_majors_vectors',
                                  'create_majors_sds', 
+                                 'export_majors_sds',
                                  'test'
                                  ],
                         nargs='*',
@@ -500,6 +557,13 @@ if __name__ == '__main__':
                         default=None);
     parser.add_argument('-s', '--savefile',
                         help='fully qualified path to file for saving result depending on requested action',
+                        default=None);
+    parser.add_argument('-e', '--exportfile',
+                        help='fully qualified path to file for saving CSV export',
+                        default=None);
+    parser.add_argument('-m', '--major',
+                        nargs='*',
+                        help='major to include in majors_sds export; use multiple times as needed',
                         default=None);
     
     args = parser.parse_args();
@@ -536,28 +600,26 @@ if __name__ == '__main__':
         print("Majors student DFs are in %s" % savefile)
         
     elif 'create_majors_sds' in args.action:
-        # Make sure there is a savefile specified, else the whole
-        # computation happens, but is not saved
-        if args.savefile is None:
-            raise ValueError("Must provide a file name for the computed majors SDs.")
-         
-        # Have we already computed the majors-->course-vector-DFs?
-        if explorer._majors_student_dfs_dict is None:
-            # No, but did user provide a load file for the majors-->student-DFs?
-            if args.file is not None:
-                explorer.load_majors_student_dfs(args.file)
-            else:
-                # Bite the bullet and spend 10 minutes on a coffee:
-                explorer._majors_student_dfs_dict = explorer.course_vectors_by_majors()
-        
-        explorer._majors_sds_dict = explorer.compute_majors_breadths_l2()
+        explorer.prep_majors_sd_creation(args.safefile, args.file)
 
         with open(args.savefile, 'wb') as fd:
             pickle.dump(explorer.majors_sds_dict, fd)
             
         print("Majors student SDs are in %s" % args.savefile)
 
-
+    elif 'export_majors_sds' in args.action:
+        if args.file is not None and os.path.exists(args.file):
+            # Assume that the provided file is a precomputed majors_sds structure:
+            explorer.load_majors_sds(args.file)
+        else:
+            # No precomputed majors_sds file specified; create
+            # the data structure:
+            explorer.prep_majors_sd_creation(args.savefile)
+        # Above loaded majors_sds loded in explorer; ready to export:
+        explorer.export_majors_sds(args.exportfile, args.major)
+        print ("Majors_sds export is in %s" % args.exportfile)
+            
+        
     elif 'test' in args.action:
         pass
         

@@ -165,6 +165,8 @@ class StudentFocusAnalyst(object):
         @param student: a student entity: either a student ID, or 
             a student's set of courses.
         @type student: {str | pandas.DataFrame}
+        @return: SD of given student, computed from the vectors of the student's courses
+        @rtype: float
         '''
         # Method course_sds() will return a Series with the 
         # element-wise SDs of all courses. The method takes
