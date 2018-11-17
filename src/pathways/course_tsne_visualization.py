@@ -158,6 +158,11 @@ class TSNECourseVisualizer(object):
     # Dict for the explicit course --> academicGroup map in course2school_map_file:
     course_school_dict = {}
 
+    # NOTE: this list is replicated in ../utils/constants.py
+    # An alternative to make changes in both places could/should
+    # be to import from there. But am loathe to change this code
+    # right now:
+    
     acad_grp_name_root = {
         'AA'     : 'ENGR',
         'ACCT'  : 'GSB',
@@ -1270,7 +1275,7 @@ class TSNECourseVisualizer(object):
           
         crse_name_plus_descr = self.append_to_course_list_display(course_names)
         if not self.standalone:
-            self.send_to_main(Message('update_crse_board', crse_name_plus_descr))
+            self.send_to_main(Message('update_crse_board', self.sort_crs_desc_html(crse_name_plus_descr)))
 
     #--------------------------
     # onclick

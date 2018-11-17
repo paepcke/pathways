@@ -17,8 +17,12 @@ import time
 import gensim
 from gensim.models import KeyedVectors
 from gensim.models import Word2Vec
+from sklearn import preprocessing
+from sklearn.decomposition.pca import PCA
+from sklearn.manifold import Isomap
 
 import numpy as np
+import sklearn
 
 
 class Action(Enum):
@@ -106,10 +110,11 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             accuracy = self.verify_model()
             self.logInfo('Accuracy cross registration prediction: %s' % accuracy)
         elif action == Action.OPTIMIZE_MODEL:
-            training_set_filename = actionFileName
-            cross_lists_filename  = saveFileName 
-            self.sentences = self.create_course_sentences(training_set_filename, hasHeader=hasHeader)            
-            self.optimize_model(self.sentences, cross_lists_filename, hasHeader=hasHeader)
+            self.sentences = self.load_sentences(actionFileName, ' ', hasHeader=hasHeader)
+            #cross_lists_filename  = saveFileName
+            # The call to optimize_model() is currently done 
+            # in __main__: 
+            # self.optimize_model(self.sentences, cross_lists_filename, hasHeader=hasHeader)
         elif action == Action.CREATE_SENTENCES_FILE:
             emplid_crs_major_strm_file = actionFileName
             sentences = self.create_course_sentences(emplid_crs_major_strm_file, 
@@ -134,7 +139,8 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             size=vec_size,
             window=win_size,
             min_count=2,
-            workers=10)
+            workers=10,
+            batch_words=5000)
         model.train(training_set, total_examples=len(training_set), epochs=10)
         self.logInfo("Done creating model.")
         return model
@@ -201,16 +207,28 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
     # import_sentences 
     #------------------
     
-    def load_sentences(self, sentence_filename, hasHeader=True):
+    def load_sentences(self, sentence_filename, separator=',', hasHeader=True):
 
         res_arr_of_arr = []
         with open(sentence_filename, 'r') as sentence_fd:
-            csv_reader = csv.reader(sentence_fd)
+            csv_reader = csv.reader(sentence_fd, delimiter=separator)
             if hasHeader:
                 # Throw out the column name header:
-                next(csv_reader)
+                header = next(csv_reader)
+                if len(header) == 1 and header[0].find('"') == -1:
+                    is_for_line_sentence_method = True
+                    # In this case there can't be a header, b/c 
+                    # the LineSentence() method doesn't want one.
+                    # So we just read the first study set:
+                    res_arr_of_arr.append(header[0].split(' '))
+                else:
+                    is_for_line_sentence_method = False
+                
             for sentence in csv_reader:
-                res_arr_of_arr.append(sentence)
+                if is_for_line_sentence_method:
+                    res_arr_of_arr.append(sentence[0].split(' '))
+                else:
+                    res_arr_of_arr.append(sentence)
         return res_arr_of_arr
     
     #--------------------------
@@ -224,8 +242,13 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                                 high_strm=None,
                                 acad_careers=None):
         '''
+        NOTE: A more versatile method for creating sentences from
+              enrollment files is create_sentences.py.
+         
         Given a course info file, create a list of lists that
         can be used as input sentences for word2vec. 
+        NOTE: a more recent replacement of this method is the
+              standalone program create_sentences.py.
         
         Expected input format:
         
@@ -313,6 +336,10 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                 
             self.logInfo('Creating sentences from enrollments...')
             for emplid, coursename, major, career, strm in reader: #@UnusedVariable
+                # Depending on how the underlying data was constructed, 
+                # undeclares may end up showing as having major '\N':
+                if major == '\\N':
+                    major = 'UNDECL'
                 if emplid != curr_emplid:
                     # Starting a new student:
                     if curr_sentence is not None:
@@ -366,7 +393,8 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                        grid_results_save_file_name,
                        vector_sizes=None,
                        window_sizes=None,
-                       topn = 4):
+                       topn = 4,
+                       num_low_dims=2):
         '''
         Train with a variety of vector sizes and window
         combinations. Run the cross-list validation for
@@ -436,9 +464,9 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
             for vec_size in vector_sizes:
                 for win_size in window_sizes:
                     #********
-                    #*****self.model = self.create_model(self.sentences, vec_size=vec_size, win_size=win_size)
-                    save_file = self.make_filename(save_dir, prefix='all_since2000', vec_size=vec_size, win_size=win_size, suffix_no_dot='model')
-                    self.model = self.load_model(save_file)
+                    self.model = self.create_model(self.sentences, vec_size=vec_size, win_size=win_size)
+                    #save_file = self.make_filename(save_dir, prefix='all_since2000', vec_size=vec_size, win_size=win_size, suffix_no_dot='model')
+                    #self.model = self.load_model(save_file)
                     #********
                     self.word_vectors = self.model.wv
                     self.vectors     = self.word_vectors.vectors
@@ -449,7 +477,7 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                     # Save the model under an appropriate name:
                     save_file = self.make_filename(save_dir, prefix='all_since2000', vec_size=vec_size, win_size=win_size, suffix_no_dot='model')
                     #*********
-                    #****self.save(save_file)
+                    self.save(save_file)
                     #*********                    
                     
                     if verification_method == VerificationMethods.TOP_N:
@@ -472,12 +500,79 @@ class Word2VecModelCreator(gensim.models.Word2Vec):
                                                              num_comparisons,
                                                              num_of_cross_lists
                                                              )
+                    # Next, compute PCA, and add to result the 
+                    # Two-tuple with the percentage variance explained
+                    # values for the two dimensions:
+                    result.add_pca_power(self.compute_pca_explain_power(self.model, num_dims=num_low_dims))
                     result_objects.append(result)
+
+                    # Next, create isomap non-linear embedding
+                    # to 2 dims, and obtain the reconstruction error:
+                    reconstruction_error = self.compute_isomap_explain_power(self.model, num_dims=num_low_dims)
+                    result.add_isomap_reconstruction_error(reconstruction_error)
+
                     # Save this result to file:
                     grid_results_save_fd.write(str(result) + '\n')
                     grid_results_save_fd.flush()
 
         return result_objects
+
+    #--------------------------
+    # compute_pca_explain_power 
+    #----------------
+    
+    def compute_pca_explain_power(self, model, num_dims=2):
+        '''
+        Given a computed course vectors embedding model, 
+        extract the vectors, standardize them, perform
+        a 2-dim PCA, and return the two-tuple with each of
+        the dimensions explained-variance ratio. 
+        
+        @param model: course context model as trained by neural net
+        @type model: gensim.model.word_vectors
+        @return: ratio of explained variance for each of the two dims
+        @rtype: (float,float)
+        '''
+        
+        vectors = model.wv.vectors
+        #********
+        #vectors_standardized = preprocessing.scale(vectors)
+        vectors_standardized = vectors
+        vectors_standardized_normalized = preprocessing.normalize(vectors_standardized, norm='l2')
+        #********
+        pca = PCA(n_components=num_dims)
+        _principalComponents = pca.fit_transform(vectors_standardized_normalized)
+        explained_variance_ratios = pca.explained_variance_ratio_
+        return explained_variance_ratios
+    
+    #--------------------------
+    # compute_isomap_explain_power 
+    #----------------
+    
+    def compute_isomap_explain_power(self, model, num_dims=2): 
+        '''
+        Given a computed course vectors embedding model, extract the
+        vectors, standardize them, perform a 2-dim isomap embedding,
+        and return the two-tuple with the reconstruction error.
+        
+        @param model: course context model as trained by neural net
+        @type model: gensim.model.word_vectors
+        @return: ratio of explained variance for each of the two dims
+        @rtype: (float,float)
+        '''
+        
+        vectors = model.wv.vectors
+        #********
+        vectors_standardized = preprocessing.scale(vectors)
+        #vectors_standardized = vectors
+        #vectors_standardized_normalized = preprocessing.normalize(vectors_standardized, norm='l2')
+        #********
+        isomap = Isomap(n_components=num_dims)
+        x_transformed = isomap.fit_transform(vectors_standardized)
+        x_transformed.shape
+        reconstruction_error = isomap.reconstruction_error()
+        return reconstruction_error
+    
     
     #--------------------------
     # make_filename 
@@ -796,6 +891,23 @@ class CrossRegistrationTestResult(object):
         self.win_size = win_size
         self.num_comparisons = num_comparisons
         self.num_cross_registrations = num_cross_list_sets
+        self.pca_var_ration_explained = (0.0)
+        self.reconstruction_error = -1.0
+        
+    def add_pca_power(self, pca_var_ratio_explained_arr):
+        '''
+        Given a 2-tuple with the explained-variance ratio
+        of the two PCA dimensions, add them to the test
+        object. 
+        
+        @param pca_var_ratio_explained_arr: ratios of explained variance for top 2 PCA dims 
+        @type pca_var_ratio_explained_arr: (float,float)
+        '''
+        
+        self.pca_var_ration_explained = pca_var_ratio_explained_arr
+        
+    def add_isomap_reconstruction_error(self, reconstruction_error):
+        self.reconstruction_error = reconstruction_error
 
 class CrossRegistrationTopNResult(CrossRegistrationTestResult):
         
@@ -816,9 +928,14 @@ class CrossRegistrationTopNResult(CrossRegistrationTestResult):
         self.accuracy = accuracy
         
     def __str__(self):
-        printable = 'Test: topn-%s, vec-%s, win-%s, accuracy-%s num-compares-%s, num-registrations-%s\nprob-when_successful-%s' %\
+        printable = 'Test: topn-%s, vec-%s, win-%s, accuracy-%s num-compares-%s, ' +\
+                    'num-registrations-%s\nprob-when_successful-%s,' +\
+                    'pca_explained_var_ratio-%s' +\
+                    'isomap_reconstruction_error-%s' \
+                    %\
             (self.topn, self.vec_size, self.win_size, self.accuracy, self.num_comparisons, self.num_cross_list_sets,
-             self.success_probabilities)
+             self.success_probabilities, str(self.pca_var_ratio_explained),
+             self.reconstruction_error)
         return printable
         
 class CrossRegistrationRankResult(CrossRegistrationTestResult):
@@ -832,12 +949,16 @@ class CrossRegistrationRankResult(CrossRegistrationTestResult):
         self.args = args
         
     def __str__(self):
-        printable = 'vecdim,winsize,mean_rank,median_rank,sd_rank\n'
-        printable += '%d,%d,%.1f,%.1f,%.1f' % (self.vec_size, 
+        printable = 'vecdim,winsize,mean_rank,median_rank,sd_rank,pca_var_explained,isomap_reconstruction_error\n'
+        printable += '%d,%d,%.1f,%.1f,%.1f,(%.2f,%.2f),%.2f' % (self.vec_size, 
                                                self.win_size, 
                                                self.mean_rank,
                                                self.median_rank,
-                                               self.sd_rank)
+                                               self.sd_rank,
+                                               self.pca_var_ration_explained[0],
+                                               self.pca_var_ration_explained[1],
+                                               self.reconstruction_error
+                                               )
         return printable
     
 # -------------------------------------------- Main -------------------------
@@ -932,14 +1053,22 @@ if __name__ == '__main__':
     
         if args.savefile is None:
             raise ValueError("Must provide save filename for optimization result.")
-        # Now we have a wordvec_creator with a model in
-        # in, or with some model's vectors.
         timestr = time.strftime("%Y-%m-%d_%H_%M_%S")
         test_results_file = os.path.join(save_dir, 'cross_reg_test_res_%s.txt' % timestr)
+        # Instantiate a new creator to init for model optimization.
+        # We pretend that the file has a header, though with the new
+        # way of producing sentences, the sentence file won't have a header,
+        # and the separator with be space, not comma. The load_sentences()
+        # method will do the right thing: 
+        wordvec_creator = Word2VecModelCreator(action=Action.OPTIMIZE_MODEL, 
+                                               actionFileName=args.file,
+                                               hasHeader=True)
         res_objs = wordvec_creator.optimize_model(VerificationMethods.RANK,
                                                   grid_results_save_file_name=args.savefile,
-                                                  vector_sizes = [50, 100, 150, 200, 300, 400, 500, 600],
-                                                  window_sizes = [2, 5, 10, 15, 20, 25]
+                                                  vector_sizes = [64, 128, 256, 512],
+                                                  #window_sizes = [2, 5, 10, 15, 20, 25]
+                                                  window_sizes = [10],
+                                                  num_low_dims=2
                                                   )
     
     

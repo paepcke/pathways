@@ -209,21 +209,41 @@ class StudentFocusExplorer(object):
             majors_sds_subset = self.majors_sds_dict()
         else:
             # Want only the SD lists for some majors:
-            majors_sds_subset = dict([ (k, list(self._majors_sds_dict.get(k, None).values)) for k in majors_list ])
+            majors_sds_subset = {}
+            unknown_majors = []
+            for major in majors_list:
+                majors_sds =  self._majors_sds_dict.get(major, None)
+                if majors_sds is None:
+                    self.logWarn("Major %s is not known." % major)
+                    unknown_majors.append(major)
+                    continue
+                # Make a simple Python array of the Series of SDs in the current major,
+                # and add that array to the majors SDs caller asked for:
+                majors_sds_subset[major] = list(majors_sds)
             
+        # Not all majors had the same number of students, so the
+        # list of student SDs in the majors_sds_subset dict may 
+        # be different for each key's values. Add NULL to the shorter
+        # lists:
+        longest_sd_list = max([len(sds) for sds in majors_sds_subset.values()])
+        for sd_list in majors_sds_subset.values():
+            sd_list.extend(['null'] * (longest_sd_list - len(sd_list)))
+
+        # Turn the dict into a nice df:        
         export_df = DataFrame.from_records(majors_sds_subset)
-        self.logInfo("Writing majors_sds for %s majors to file..." % len(majors_list))
-#         export_df.to_csv(savefile, 
-#                          sep=",", 
-#                          na_rep="null", 
-#                          header=majors_list, 
-#                          index_label='Breadth', 
-#                          quoting=csv.QUOTE_MINIMAL
-#                          )
-        export_df.to_csv(savefile, 
-                         header=majors_list, 
-                         ) 
-        self.logInfo("Done writing majors_sds for %s majors to file." % len(majors_list))        
+        self.logInfo("Writing majors_sds for %s majors to file..." % len(majors_sds_subset.keys()))
+        
+        # Write to file; the index=False prevents an 
+        # extra column on the left, with row numbers 1,2,3, ...
+        export_df.to_csv(savefile, index=False) 
+
+        if len(unknown_majors) > 0:
+            unknown_majors_warning = "NOTE: unknown majors were '%s'" % ','.join(unknown_majors)
+        else:
+            unknown_majors_warning = ''
+        self.logInfo("Done writing majors_sds for %s majors to file. %s" % (len(majors_list), 
+                                                                            unknown_majors_warning
+                                                                            ))        
 
     # ------------------------------------------ Computing Data Structures --------------
         
@@ -332,7 +352,7 @@ class StudentFocusExplorer(object):
             # Each df has one student's course x course_vector:
             for student_course_df in vectors_by_majors[major]:
                 # Get one student's SD from their DF:
-                student_sd = self.student_vec_analyst.course_sds(student_course_df)
+                student_sd = self.student_vec_analyst.student_breadth_l2(student_course_df)
                 # And add to the SDs of students in the current major:
                 student_sd_array.append(student_sd)
             # Make a 1D array (i.e. Series). Name the series
@@ -544,12 +564,16 @@ if __name__ == '__main__':
     
     parser.add_argument('-a', '--action',
                         type=str,
-                        choices=['create_majors_vectors',
-                                 'create_majors_sds', 
-                                 'export_majors_sds',
+                        choices=['create_majors_vectors',   # Requires savefile option
+                                 'create_majors_sds',       # Requires savefile option. If create_majors_vectors was done
+                                                            #   and saved earlier, provide its pickle in file option for speed.
+                                                            #   else the computation occurs again
+                                 'export_majors_sds',       # Requires exportfile option. Use file if pre-computed majors_sds
+                                                            #   pickle exists. Else use savefile as destination of the majors_sds
+                                                            #   that will be computed.
                                  'test'
                                  ],
-                        nargs='*',
+                        action='append',
                         help="what you want the program to do.", 
                         default=None);
     parser.add_argument('-f', '--file',
@@ -562,7 +586,7 @@ if __name__ == '__main__':
                         help='fully qualified path to file for saving CSV export',
                         default=None);
     parser.add_argument('-m', '--major',
-                        nargs='*',
+                        action='append',
                         help='major to include in majors_sds export; use multiple times as needed',
                         default=None);
     
@@ -600,8 +624,8 @@ if __name__ == '__main__':
         print("Majors student DFs are in %s" % savefile)
         
     elif 'create_majors_sds' in args.action:
-        explorer.prep_majors_sd_creation(args.safefile, args.file)
-
+        explorer.prep_majors_sd_creation(args.savefile, args.file)
+        explorer.compute_majors_breadths_l2()
         with open(args.savefile, 'wb') as fd:
             pickle.dump(explorer.majors_sds_dict, fd)
             

@@ -40,6 +40,7 @@ class CourseVectorsCreator(gensim.models.Word2Vec):
         logInfo('Loading course vector model from %s...' % model_file_name)
         self.word2vec_model = gensim.models.Word2Vec.load(model_file_name)
         logInfo('Model loaded.') 
+        return self.word2vec_model
         
     #--------------------------
     # save_word_vectors_only 
