@@ -135,6 +135,21 @@ Data are in /Users/paepcke/EclipseWorkspacesNew/pathways/src/data/SequenceTrueMo
                       EnrollmentHistory. But we also add the
                       offering department here.
 
+- CourseAvailability (from courseAvailability.csv):
+                 File created on staging (see below for queries).
+                      strm_year, course_key
+                 The strm_year is the first 3 digit of a strm.
+                 The course_key is an int into the AllCourses
+                 table. Used with AllCourses
+
+- AllCourses (from allCourses.csv):
+                 File created on staging (see below for queries):
+                      id, course_code
+                 where id is an autoincrement int, and course_code
+                 is concat(subject,catalog_nbr). Used with table
+                 CourseAvailability
+                 
+
 
 - crs_sequenced_sentences.txt: <--- Use for modeling
    Sentences ready for input to gensim.models.word2vec.LineSentence() method.
@@ -151,3 +166,75 @@ Data are in /Users/paepcke/EclipseWorkspacesNew/pathways/src/data/SequenceTrueMo
    Special key 'HighestStudentId' holds the next short-studentId number
    to use by shorten_enrollment_history_emplids.py are made.
 
+# -------------------- Queries for sequence-honoring tables above ------
+
+CREATE TABLE AllCourses (
+    id int PRIMARY KEY AUTO_INCREMENT,
+    course_code varchar(50) UNIQUE
+    ) engine=MyISAM;
+
+INSERT IGNORE INTO AllCourses(course_code)
+  SELECT concat(subject,catalog_nbr) AS course_code
+    FROM carta.student_enrollment;
+
+CREATE TABLE CourseAvailability (
+    strm_year int,
+    course_key int
+    ) engine=MyISAM;
+
+# ~2min
+INSERT INTO CourseAvailability
+  SELECT strm_year, id AS course_key
+    FROM (select distinct
+                 floor(strm/10) AS strm_year,
+                 concat(subject, catalog_nbr) AS course_code
+            FROM carta.student_enrollment
+         ) AS CoursesInYears
+    LEFT JOIN AllCourses using(course_code);
+
+
+# Example query: Courses that existed in 115:
+
+SELECT course_code
+  FROM CourseAvailability LEFT JOIN AllCourses
+    ON course_key = id
+ WHERE strm_year = 115;
+
+# Example query: How many courses that existed in 115:
+
+SELECT count(*)
+  FROM CourseAvailability LEFT JOIN AllCourses
+    ON course_key = id
+ WHERE strm_year = 115;
+
+
+# Export AllCourses:
+SELECT 'id', 'course_code'
+UNION ALL
+SELECT * INTO OUTFILE '/tmp/allCourses.csv'
+   FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' LINES TERMINATED BY '\n'
+  FROM AllCourses;
+
+SELECT 'strm_year', 'course_key'
+UNION ALL
+SELECT * INTO OUTFILE '/tmp/courseAvailaility.csv'
+  FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' LINES TERMINATED BY '\n'
+  FROM CourseAvailability;
+    
+    
+# ----------------- Import above tables into sqlite ---------------
+
+Sqlite db is called courseAvailability.sqlite:
+
+CREATE TABLE AllCourses (
+    id int,
+    course_code varchar(50)
+    );
+
+CREATE TABLE CourseAvailability (
+    strm_year int,
+    course_key int
+    );
+
+.import "|tail -n +2 /Users/paepcke/EclipseWorkspacesNew/pathways/src/data/allCourses.csv" AllCourses
+.import "|tail -n +2 /Users/paepcke/EclipseWorkspacesNew/pathways/src/data/courseAvailability.csv" CourseAvailability

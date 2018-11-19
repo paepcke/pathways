@@ -8,6 +8,7 @@ import argparse
 import logging
 import os
 import re
+import sqlite3
 import sys
 
 from gensim.models.deprecated.word2vec import Word2Vec
@@ -21,8 +22,22 @@ from utils.constants import majors
 from utils.course_info_collector import CourseInfoCollector
 
 
+# Path to sqlite db that holds info on which courses were available
+# in each quarter:
+#
+# 	  CREATE TABLE CourseAvailability (
+# 	      strm_year int,
+# 	      course_key int
+# 	      );
+# 	  CREATE TABLE AllCourses (
+# 	      id int,
+# 	      course_code varchar(50)
+# 	      );
+
+COURSE_INFO_PATH = '/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/courseAvailability.sqlite'
+
 # List of all majors:
-class DimReducer(object):
+class DimReducerSimple(object):
     '''
     Given a vector file as exported from a gensim model, 
     compute the top p PCA components from the n-dimensional 
@@ -30,7 +45,13 @@ class DimReducer(object):
     number of dimensions can be set during instance creation.
     CSV output can be to stdout, or a file.
     
-    Columns will be named PCA_Dim1, PCA_Dim2, etc.
+    Columns will be named PCA_Dim1, PCA_Dim2, etc., and output
+    of the result vectors is either stdout, or a given file.
+    
+    The subclass DimReducerByYear(DimReducerSimple) applies PCA 
+    separately only to courses that were available during the
+    various years. It thus creates one set of vectors for
+    each year since 2000.
     '''
 
     subject_extract_pattern = re.compile(r'([^0-9]*).*')
@@ -45,40 +66,103 @@ class DimReducer(object):
 
     def __init__(self, 
                  vectors_file,
-                 pca_outfile = None,
                  num_components = 2,
                  loggingLevel=logging.INFO,
-                 logFile=None
+                 logFile=None,
                  ):
         '''
-        Constructor
+        Constructor. Prepares data. This step needs to be done
+        by instances of this superclass, as well as instances
+        olf the DimReducerByYear subclass.
+        
+        Initializes self.vectors, self.course_df, and self.num_components
+                
+        @param vectors_file: vectors created by gensim.word2vec()
+        @type vectors_file: str
+        @param num_components: target number of dimensions
+        @type num_components: int
+        @param loggingLevel: see Python logging module
+        @type loggingLevel:
+        @param logFile: log destination. Default, stdout 
+        @type logFile: str
         '''
+        
 
         self.setupLogging(loggingLevel, logFile)
         
-        # A course-name to course-info mapper:
-        crse_info_collector = CourseInfoCollector()
-
-        vectors = self.load_vectors(vectors_file)
+        # Prepare record of explained variance for each strm:
+        self.explained_variance_ratios = {}
+        
+        self.vectors = self.load_vectors(vectors_file)
         
         # Number of components will be passed into a scikit learn method,
         # which expects an int; so make sure:
-        num_components = int(num_components)
-        self.num_components = num_components
+        self.num_components = int(num_components)
         
         # Turn vectors into the rows of a dataframe:
         
-        course_df = self.vecs_to_dataframe(vectors)
+        self.course_df = self.vecs_to_dataframe(self.vectors)
                 
         # If there are majors or emplids in the 
         # sentences, remove them for the PCA:
                             
-        course_df = self.extract_numerics(course_df, majors)                            
+        self.course_df = self.extract_numerics(self.course_df, majors)
         
-        x = self.standardize_data(course_df)
+    #--------------------------
+    # run 
+    #----------------
+    
+    def run(self, pca_outfile):
+        
+        principalDf = self.generate_low_dim_vecs(self.course_df, self.num_components)
+        self.output_as_csv(principalDf, pca_outfile)
+        self.explained_variance_ratios = {'allYears: %s' % self.pca.explained_variance_ratio_}
+
+        
+    #--------------------------
+    # generate_low_dim_vecs 
+    #----------------
+
+    def generate_low_dim_vecs(self, course_df, num_components):
+        '''
+        Given a dataframe with each course's high dimensional vector:
+        
+        DataFrame:            0         1      ...          148       149
+			MATH51        0.717620 -1.844187    ...    -0.377891  0.620382
+			CS106A       -0.689994  0.262886    ...     0.575509  0.290112
+			CHEM33       -2.393712 -2.051752    ...     0.337395  1.404484
+		
+		i.e. the index is the courses, but the body of the DF are the raw
+		course embedding vectors from word2vec.
+		
+		Return a new dataframe with course names as the index AND a
+		column with the course names, plus columns for the course's academic
+		group, subject, and both short, and long course descriptions.
+		
+		The method standardizes the data before running PCA. Final DF:
+		
+		    Index       CourseName     Subject    AcadGroup    CrseDescrShort      CrseDescrLong
+		  <crseName>       ...                           ...                      ...
+        
+        @param course_df: dataframe of raw, unstandardized course vectors,
+            with course names as the row names (index)
+        @type course_df: pandas.DataFrame
+        @param num_components: number of dimensions to which the vectors are
+            to be reduced.
+        @type num_components: int
+        @return dataframe with course info and low-dim vectors.
+        @rtype pandas.DataFrame
+        '''
+
+        self.logInfo("Standardizing data...")
+        x_matrix = self.standardize_data(course_df)
+        self.logInfo("Done standardizing data...")
+        
+        # A course-name to course-info mapper:
+        crse_info_collector = CourseInfoCollector()
         
         self.logInfo("Computing PCA...")
-        principalDf = self.compute_pca(x, num_components)
+        principalDf = self.compute_pca(x_matrix, num_components)
         self.logInfo("Done computing PCA.")
         
         # Add the course names as row names back in:
@@ -112,8 +196,8 @@ class DimReducer(object):
         descriptions_df.index = principalDf.index
         principalDf = pd.concat([principalDf, descriptions_df], axis=1)
                         
-        self.output_as_csv(principalDf, pca_outfile)
-
+        return principalDf
+        
     #--------------------------
     # load_vectors 
     #----------------
@@ -225,7 +309,7 @@ class DimReducer(object):
         for item in items:
             if not type(item) == str:
                 res.append(False)
-            elif len(item) == 60 and DimReducer.EMPLID_START_PATTERN is not None:
+            elif len(item) == 60 and DimReducerSimple.EMPLID_START_PATTERN is not None:
                 res.append(True)
             elif len(item) == 88 and item.endswith('=='):
                 res.append(True)
@@ -256,7 +340,7 @@ class DimReducer(object):
         
         # Use regex to collect all chars that are not numbers
         # from each course name in turn. Creates an array:
-        subjects = [DimReducer.subject_extract_pattern.search(course_name).group(1) for course_name in course_names]
+        subjects = [DimReducerSimple.subject_extract_pattern.search(course_name).group(1) for course_name in course_names]
         return subjects
     
     #--------------------------
@@ -264,13 +348,125 @@ class DimReducer(object):
     #----------------
     
     def compute_pca(self, x, num_components=2):
-        pca = PCA(n_components=num_components)
-        principalComponents = pca.fit_transform(x)
+        '''
+        Given a numpy matrix of row vectors, or a dataframe,
+        return the result of a PCA. The number of components
+        in the mapping is controlled by num_components. 
+        
+        If a dataframe is returned, with column names 
+        PCA_1, PCA_2, ... If a df was passed in, the resulting
+        df will have the same row labels (i.e. index as the
+        passed-in arg). 
+        
+        The instance var self.pca will contain the PCA instance.
+        So callers can examine, for example: self.pca.explained_variance_ratios
+        
+        @param x: vectors to be reduced
+        @type x: {nparray | pandas.DataFrame}
+        @param num_components: target number of components
+        @type num_components: int
+        '''
+        if type(x) == pd.DataFrame:
+            # Save the df index (i.e. row labels):
+            row_lables = x.index
+            # Extract just the numbers for the PCA:
+            x = x.values
+        else:
+            row_lables = None 
+        
+        self.pca = PCA(n_components=num_components)
+        principalComponents = self.pca.fit_transform(x)
         col_names = ['PCA_'+str(col_num) for col_num in range(num_components)]
         principalDf = pd.DataFrame(data = principalComponents, columns=col_names)
+        if row_lables is not None:
+            principalDf.index = row_lables
+            
         return principalDf  
     
+    
+    # ------------------------- Database Access ----------------    
+
+    #--------------------------
+    # init_sqlite3_db 
+    #----------------
+
+    def init_sqlite3_db(self, sqlite_file):
+        '''
+        Creates an Sqlite3 connection to the given .sqlite file.
+        Sets the connection's row_factory to sqlite3.Row, so that
+        results will be tuples that also function as dicts, with
+        keys are column names.
+        
+        @param sqlite_file: database file
+        @type sqlite_file: str
+        '''
+        
+        conn = sqlite3.connect(sqlite_file)
+        conn.row_factory = sqlite3.Row
+
+        self.db_cursor = conn.cursor()
+        
+
+    #--------------------------
+    # courses_in_strm_year 
+    #----------------
+
+    def courses_in_strm_year(self, strm_year):
+        '''
+        Takes the first three digits of a strm,
+        i.e. the year part, and returns a list of
+        all courses that were available during that
+        year.
+        
+        @param strm_year: three-digit strm year
+        @type strm_year: {int | str}
+        '''
+        
+        res = self.db_cursor.execute('''SELECT course_code
+                                		  FROM CourseAvailability LEFT JOIN AllCourses
+                                		    ON course_key = id   
+                                		 WHERE strm_year = %s;''' % strm_year
+                              )
+        rows = res.fetchall()
+        courses = [row['course_code'] for row in rows]
+                              
+        return courses
+    
     # ------------------------- Utilities ----------------
+    
+    #--------------------------
+    # variance_ratios 
+    #----------------
+    
+    def variance_ratios(self, features):
+        '''
+        Given the features of a space, return each
+        feature's variance, it's variance ratio, and
+        total variance
+        
+        Input should be a dataframe of the form:
+        
+                 Feature1   Feature2   Feature3...
+        sample1   number     number     ...
+        sample2   number     number     ...
+           ...
+           
+        Example:
+                     EmbeddingDim1   EmbeddingDim2  EmbeddingDim3 ...
+         course1
+         course2
+           ...
+           
+        Variances are computed for each column. Total variance:
+        Sum of all feature variances, variance ratios: featureVariance/totalVariance
+        
+        @param features: samples x features dataframe
+        @type features: pandas.DataFrame
+        @return: variance object with each total variance, each feature's
+            variance, and variance ratio.
+        @rtype: Variance 
+        '''
+    
     
     #--------------------------
     # setupLogging 
@@ -287,7 +483,7 @@ class DimReducer(object):
         '''
         # Set up logging:
         #self.logger = logging.getLogger('pullTackLogs')
-        DimReducer.logger = logging.getLogger(os.path.basename(__file__))
+        DimReducerSimple.logger = logging.getLogger(os.path.basename(__file__))
 
         # Create file handler if requested:
         if logFile is not None:
@@ -303,8 +499,8 @@ class DimReducer(object):
         handler.setFormatter(formatter)
         
         # Add the handler to the logger
-        DimReducer.logger.addHandler(handler)
-        DimReducer.logger.setLevel(loggingLevel)
+        DimReducerSimple.logger.addHandler(handler)
+        DimReducerSimple.logger.setLevel(loggingLevel)
          
     #--------------------------
     # Logging class methods 
@@ -312,20 +508,146 @@ class DimReducer(object):
          
     @classmethod
     def logDebug(cls, msg):
-        DimReducer.logger.debug(msg)
+        DimReducerSimple.logger.debug(msg)
 
     @classmethod
     def logWarn(cls, msg):
-        DimReducer.logger.warn(msg)
+        DimReducerSimple.logger.warn(msg)
 
     @classmethod
     def logInfo(cls, msg):
-        DimReducer.logger.info(msg)
+        DimReducerSimple.logger.info(msg)
 
     @classmethod
     def logErr(cls, msg):
-        DimReducer.logger.error(msg)
+        DimReducerSimple.logger.error(msg)
+        
+        
+    # ------------------------------ Class DimReducerByYear ------------------------        
           
+class DimReducerByYear(DimReducerSimple):
+    '''
+    In contrast to instances of DimReducerSimple, DimReducerByYear
+    computes a separate PCA for each academic year from 2000 on.
+    
+    Output is as one file per year to a given directory, optionally 
+    starting with a given prefix. The files will be called 
+    <prefix>pca_vecs.txt 
+    '''
+    
+    #--------------------------
+    # Constructor DimReducerByYear 
+    #----------------
+    
+    def __init__(self, 
+                 vectors_file,
+                 num_components = 2,
+                 loggingLevel=logging.INFO,
+                 logFile=None
+                 ):
+        '''
+        Constructor. Prepares data, then runs the PCA.
+                
+        @param vectors_file: vectors created by gensim.word2vec()
+        @type vectors_file: str
+        @param pca_outfile: destination of the lower-dim vectors. Default: stdout
+        @type pca_outfile: str
+        @param num_components: target number of dimensions
+        @type num_components: int
+        @param loggingLevel: see Python logging module
+        @type loggingLevel:
+        @param logFile: log destination. Default, stdout 
+        @type logFile: str
+        '''
+        
+        # Have superclass initialize logging,
+        # read the vectors, and create dataframe 
+        # course_df.
+        super().__init__(vectors_file,
+                         num_components = 2,
+                         loggingLevel=logging.INFO,
+                         logFile=None
+                         )
+        
+        
+    #--------------------------
+    # run 
+    #----------------
+        
+    def run(self, pca_outdir, sqlite_file):
+        
+        self.init_sqlite3_db(sqlite_file)
+        # Get sequence of strm_year-years: 100, 101, 102, ...
+        # Method strm_sequence() returns quarters: 1002, 1004,...
+        # Divide each of these by 10, using the array element-by-element
+        # division of numpy arrays:
+          
+        for strm_year in (np.array(self.strm_sequence()) / 10).astype(int):
+            
+            self.logInfo("Computing pca for %s." % strm_year)
+            courses_during_strm = self.courses_in_strm_year(strm_year)
+            
+            # Do PCA only on courses offered during strm_year:
+            course_vectors_strm_df = self.course_df[self.course_df.index.isin(courses_during_strm)]
+            
+            course_vectors_strm_df_standardized = self.standardize_data(course_vectors_strm_df)
+            reduced_dim_df = self.compute_pca(course_vectors_strm_df_standardized, self.num_components)
+            
+            # Create a file name for this strm_year's PCA:
+            outfile = os.path.join(pca_outdir, 'pca_vectors_%s' % strm_year)
+            self.output_as_csv(reduced_dim_df, outfile)
+            self.explained_variance_ratios[strm_year] = self.pca.explained_variance_ratio_
+             
+            self.logInfo("Done pca for %s. Explained variance ratio: %s" % (strm_year, self.pca.explained_variance_ratio_))
+            
+        
+    #--------------------------
+    # strm_sequence 
+    #----------------
+        
+    def strm_sequence(self):
+        '''
+        Return an iterable with all strm values
+        in order from 2000 to 2018.
+        '''
+        years = range(100,120)
+        # Create [[1002,1004,1006,1008], [1012,1014,1016,1018], ...]]:
+        strms = [[10 * year_strm + 2, 10 * year_strm + 4, 10 * year_strm + 6, 10 * year_strm + 8] for year_strm in years]
+        # Flatten into a single list; you can do that with a
+        # nested list comprehension, but I don't like those:
+        res = []
+        for four_quarters_arr in strms:
+            res.extend(four_quarters_arr)
+        return res
+        
+    # ---------------------------- Class Variance ---------------------
+    
+class Variance(object):
+    
+    def __init__(self, feature_vectors):
+        self._total_variance = None
+        self._feature_variances = {}
+        self._feature_vectors = feature_vectors
+        self.compute_variances()
+    
+    def total_variance(self):
+        return self._total_variance
+    
+    def feature_variance(self, feature_name):
+        return self._feature_variances[feature_name]
+        
+    def feature_variance_ratio(self, feature_name):
+        return self._feature_variances[feature_name]/self._total_variance
+        
+    def compute_variances(self):
+        variances = self._feature_vectors.var(axis=0)
+        for (feature_name) in self._feature_vectors.columns:
+            self._feature_variances[feature_name] = variances[feature_name]
+            
+        self._total_variance = variances.sum()
+        
+            
+         
     # ------------------------------ Main ------------------------
         
 if __name__ == '__main__':
@@ -338,7 +660,7 @@ if __name__ == '__main__':
                              'are directed. Default: stdout.',
                         dest='errLogFile',
                         default=None);
-    parser.add_argument('-o', '--outfile',
+    parser.add_argument('-o', '--outlocation',
                         help='where to write the output; default: stdout',
                         default=None
                         ),
@@ -346,17 +668,35 @@ if __name__ == '__main__':
                         help='number of PCA dimensions to reduce to; default: 2',
                         default=2
                         )
+    parser.add_argument('-y', '--years',
+                        help='if this switch is present, create separate PCAs for each year; outlocation must then be a directory',
+                        action='store_true'
+                        )
     parser.add_argument('vectors',
                         help='file with vector embeddings.'
                         )
 
     args = parser.parse_args();
     
-    #reducer = DimReducer('/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/Word2vec/winning_model.model')
-    reducer = DimReducer(args.vectors,
-                         args.outfile,
-                         num_components=args.dimensions,
-                         logFile=args.errLogFile
-                         )
-    
+    #reducer = DimReducerSimple('/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/Word2vec/winning_model.model')
+    if args.years:
+        if not os.path.isdir(args.outlocation):
+            print("Outlocation must be a directory; nothing done.")
+            sys.exit()
+        reducer = DimReducerByYear(args.vectors,
+                                   num_components=args.dimensions,
+                                   logFile=args.errLogFile
+                                   )
+        # Do one PCA per strm, writing to directory outlocation:
+        reducer.run(args.outlocation, COURSE_INFO_PATH)
+
+    else:
+        reducer = DimReducerSimple(args.vectors,
+                                   num_components=args.dimensions,
+                                   logFile=args.errLogFile
+                                   )
+        reducer.run(args.outlocation)
+
+    reducer.logInfo("Explained variance ratio(s): %s" % reducer.explained_variance_ratios)
+
             
