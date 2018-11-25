@@ -14,7 +14,9 @@ import sys
 from gensim.models.deprecated.word2vec import Word2Vec
 from gensim.models.keyedvectors import KeyedVectors
 from sklearn import preprocessing
+from sklearn.decomposition import KernelPCA
 from sklearn.decomposition import PCA
+from sklearn.manifold.t_sne import TSNE
 
 import numpy as np
 import pandas as pd
@@ -33,7 +35,6 @@ from utils.course_info_collector import CourseInfoCollector
 # 	      id int,
 # 	      course_code varchar(50)
 # 	      );
-
 COURSE_INFO_PATH = '/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/courseAvailability.sqlite'
 
 # List of all majors:
@@ -67,6 +68,8 @@ class DimReducerSimple(object):
     def __init__(self, 
                  vectors_file,
                  num_components = 2,
+                 pca_type=None,
+                 tsne=False,
                  loggingLevel=logging.INFO,
                  logFile=None,
                  ):
@@ -75,12 +78,19 @@ class DimReducerSimple(object):
         by instances of this superclass, as well as instances
         olf the DimReducerByYear subclass.
         
-        Initializes self.vectors, self.course_df, and self.num_components
+        Initializes self.course_df, and self.num_components
                 
         @param vectors_file: vectors created by gensim.word2vec()
         @type vectors_file: str
         @param num_components: target number of dimensions
         @type num_components: int
+        @param pca_type: if not None, KernelPCA is performed instead
+            of PCA. The argument must then be one of 
+            'linear','poly', 'rbf', 'sigmoid', or 'cosine'
+        @type pca_type: {None | str}
+        @param tsne: if True, t_sne is performed instead of pca.
+            pca_type is ignored if tsne is True
+        @type tsne: bool
         @param loggingLevel: see Python logging module
         @type loggingLevel:
         @param logFile: log destination. Default, stdout 
@@ -90,19 +100,20 @@ class DimReducerSimple(object):
 
         self.setupLogging(loggingLevel, logFile)
         
+        self.pca_type = pca_type
+        self.tsne     = tsne
+        
         # Prepare record of explained variance for each strm:
         self.explained_variance_ratios = {}
         
-        self.vectors = self.load_vectors(vectors_file)
+        # Get dataframe with index (i.e. row labels) being the course names,
+        # and columns being feature values:
+        self.course_df = self.load_vectors(vectors_file)
         
         # Number of components will be passed into a scikit learn method,
         # which expects an int; so make sure:
         self.num_components = int(num_components)
         
-        # Turn vectors into the rows of a dataframe:
-        
-        self.course_df = self.vecs_to_dataframe(self.vectors)
-                
         # If there are majors or emplids in the 
         # sentences, remove them for the PCA:
                             
@@ -113,12 +124,31 @@ class DimReducerSimple(object):
     #----------------
     
     def run(self, pca_outfile):
+        '''
+        Assigns the PCA-reduced df to self.principalDf.
+        This df will include a column with the course names,
+        and miscellaneous columns for each course.
+        Writes principalDf to file.
         
-        principalDf = self.generate_low_dim_vecs(self.course_df, self.num_components)
-        self.output_as_csv(principalDf, pca_outfile)
-        self.explained_variance_ratios = {'allYears: %s' % self.pca.explained_variance_ratio_}
+        @param pca_outfile:
+        @type pca_outfile:
+        '''
+        
+        self.principalDf = self.generate_low_dim_vecs(self.course_df, self.num_components)
+        self.output_as_csv(self.principalDf, pca_outfile)
+        self.goodness_of_fit = self.goodness_of_fit(self.transformer)
 
+    #--------------------------
+    # goodness_of_fit 
+    #----------------
+    
+    def goodness_of_fit(self, transformer):
         
+        if isinstance(transformer, PCA):
+            return {'allYears: %s' % transformer.explained_variance_ratio_}
+        else:
+            return {}
+     
     #--------------------------
     # generate_low_dim_vecs 
     #----------------
@@ -141,8 +171,10 @@ class DimReducerSimple(object):
 		
 		The method standardizes the data before running PCA. Final DF:
 		
-		    Index       CourseName     Subject    AcadGroup    CrseDescrShort      CrseDescrLong
+		    Index      PCA_0    PCA_1   ... CourseName     Subject    AcadGroup    CrseDescrShort      CrseDescrLong
 		  <crseName>       ...                           ...                      ...
+		  
+		Stores the PCA_x names in self.pca_column_names.
         
         @param course_df: dataframe of raw, unstandardized course vectors,
             with course names as the row names (index)
@@ -161,12 +193,25 @@ class DimReducerSimple(object):
         # A course-name to course-info mapper:
         crse_info_collector = CourseInfoCollector()
         
-        self.logInfo("Computing PCA...")
-        principalDf = self.compute_pca(x_matrix, num_components)
-        self.logInfo("Done computing PCA.")
-        
+        if self.tsne:
+            self.logInfo("Computing t_sne...")
+            principalDf = self.compute_tsne(x_matrix, num_components)
+            self.logInfo("Done computing t_sne.")
+        elif self.pca_type is None:
+            self.logInfo("Computing PCA...")
+            principalDf = self.compute_pca(x_matrix, num_components)
+            self.logInfo("Done computing PCA.")
+        else:
+            self.logInfo("Computing KernelPCA...")
+            principalDf = self.compute_kpca(x_matrix, num_components)
+            self.logInfo("Done computing KernelPCA.")
+
         # Add the course names as row names back in:
         principalDf.index = course_df.index
+        
+        # Right now, principalDf only has vector columns.
+        # Before we add more, save the PCA_x col names:
+        self.pca_column_names = principalDf.columns 
         
         # Add a column with the course names:
         principalDf.loc[:,'CourseName'] = principalDf.index
@@ -206,11 +251,130 @@ class DimReducerSimple(object):
         # Just in case they passed a model:
         if vectors_path.endswith('.model'):
             model = Word2Vec.load(vectors_path)
-            vectors = model.wv 
+            vectors = model.wv
+            # Turn vectors into the rows of a dataframe:
+            vectors_df = self.vecs_to_dataframe(vectors)
+             
         else:
-            vectors = KeyedVectors.load(vectors_path)
-        return vectors
-            
+            try:
+                vectors = KeyedVectors.load(vectors_path)
+                # Turn vectors into the rows of a dataframe:
+                vectors_df = self.vecs_to_dataframe(vectors)
+            except Exception:
+                # Content of the vectors_path file might not be
+                # pickled pandas.KeyedVectors, but a regular
+                # .csv file:
+                vectors_df = self.load_csv_to_df(vectors_path, vector_col_name_root='PCA_')
+                # Must return just the numeric vectors, no other 
+                # columns.
+                vectors_df = vectors_df[[col_name for col_name in vectors_df.columns.get_values()
+                                         if col_name.startswith('PCA_')]] 
+        return vectors_df
+         
+    #--------------------------
+    # load_csv_to_df 
+    #----------------
+    
+    def load_csv_to_df(self, 
+                       infile, 
+                       vector_col_names=None, 
+                       vector_col_name_root=None, 
+                       index_col_name=None):
+        '''
+        Very specialized method: file is expected to contain
+        a column header, and rows of vectors, possibly including
+        other data. Like this:
+        
+               'PCA_1','PCA_2','PCA_3','CourseName','Ranking',...
+                0.4,     0.1,    0.7,     'CS106A',     3,  
+                0.6,     0.9,    0.1,     'MATH52',     2,
+                        ...
+                        
+        The vector_col_names must list the columns that comprise the
+        vectors. If it is None, then vector_col_name_root must have the
+        prefix of columns that contain vectors. In the above example,
+        that is 'PCA_'. If vector_col_names is provided, the vector_col_name_root
+        is ignored. 
+        
+        The index_col_name must be the name of the column whose
+        values will be used as the index (i.e. row labels) of the result
+        dataframe. If None, the col name is assumed to be the first
+        non-vector column.             
+        
+        @param infile: location of file to import
+        @type infile: str
+        @param vector_col_names: list of names for columns that comprise the vectors.
+        @type vector_col_names: {None | [str]}
+        @param vector_col_name_root: Prefix of column names that contain
+            vector values. Ignored if vector_col_names is provided.
+        @type vector_col_name_root: {None | str}
+        @param index_col_name: name of column whose values are to be the dataframe index
+        @type index_col_name: str
+        @return: a dataframe with the index being values in the index_col_name column,
+            and data being the vectors. All other information is discarded.
+        '''
+        # Unfortunately, pd.read_csv() wants to know
+        # the *numeric* index of the column that has the
+        # index values (i.e. the row labels). For generality
+        # we ask callers for the column name instead. Read
+        # the first line, and find the index of the given 
+        # index_col_name:
+        csv_header_info_dict = self.parse_vectors_header(infile, 
+                                                         vector_col_names=vector_col_names, 
+                                                         vector_col_name_root=vector_col_name_root, 
+                                                         index_col_name=index_col_name)
+        vector_col_names = csv_header_info_dict['vector_cols']
+        col_name_of_index_names = csv_header_info_dict['col_name']
+        
+        course_df = pd.read_csv(infile, 
+                    			header=0,    # Column names in line 0
+                    			index_col=csv_header_info_dict['index_values_col_num'],
+                    			usecols=vector_col_names.append(pd.Index([col_name_of_index_names]))
+                                )
+        return course_df
+        
+    #--------------------------
+    # parse_vectors_header 
+    #----------------
+    
+    def parse_vectors_header(self, 
+                             csv_file,
+                             vector_col_names=None,
+                             vector_col_name_root=None,
+                             index_col_name=None):
+        res_dict = {}
+        with open(csv_file, 'r') as fd:
+            line = fd.readline().strip()
+            try:
+                all_col_names = line.split(',')
+                
+                # Figure out names of vector columns:
+                if vector_col_names is not None:
+                    res_dict['vector_cols'] = vector_col_names
+                elif vector_col_name_root is not None:
+                    res_dict['vector_cols'] = [col_name for col_name in all_col_names if col_name.startswith(vector_col_name_root)]
+                else:
+                    res_dict['vector_cols'] = None
+
+                # Name of column that holds the row labels-to-be:
+                if index_col_name is None:
+                    # Without the name given, assume it's the 
+                    # first column after the vectors:
+                    if res_dict['vector_cols'] is None:
+                        raise(ValueError("Cannot determine name of column with row labels."))
+                    else:
+                        # Use name of first column after all the vector columns:
+                        res_dict['col_name'] = all_col_names[len(res_dict['vector_cols'])]
+                else:
+                    res_dict['col_name'] = index_col_name
+                
+                res_dict['index_values_col_num'] = all_col_names.index(res_dict['col_name'])
+                
+            except ValueError:
+                print("Could not find column '%s' with values for df index." % index_col_name)
+                sys.exit()
+        return res_dict
+        
     #--------------------------
     # vecs_to_dataframe 
     #----------------
@@ -358,8 +522,8 @@ class DimReducerSimple(object):
         df will have the same row labels (i.e. index as the
         passed-in arg). 
         
-        The instance var self.pca will contain the PCA instance.
-        So callers can examine, for example: self.pca.explained_variance_ratios
+        The instance var self.transformer will contain the PCA instance.
+        So callers can examine, for example: self.transformer.explained_variance_ratios
         
         @param x: vectors to be reduced
         @type x: {nparray | pandas.DataFrame}
@@ -374,10 +538,92 @@ class DimReducerSimple(object):
         else:
             row_lables = None 
         
-        self.pca = PCA(n_components=num_components)
-        principalComponents = self.pca.fit_transform(x)
+        self.transformer = PCA(n_components=num_components)
+        principalComponents = self.transformer.fit_transform(x)
         col_names = ['PCA_'+str(col_num) for col_num in range(num_components)]
         principalDf = pd.DataFrame(data = principalComponents, columns=col_names)
+        if row_lables is not None:
+            principalDf.index = row_lables
+            
+        return principalDf  
+    
+    #--------------------------
+    # compute_kpca 
+    #----------------
+    
+    def compute_kpca(self, x, num_components=2):
+        '''
+        Given a numpy matrix of row vectors, or a dataframe,
+        return the result of a Kernel PCA. The number of components
+        in the mapping is controlled by num_components. 
+        
+        If a dataframe is returned, with column names 
+        PCA_1, PCA_2, ... If a df was passed in, the resulting
+        df will have the same row labels (i.e. index as the
+        passed-in arg). 
+        
+        The instance var self.transformer will contain the KernelPCA instance.
+        So callers can examine, for example: self.transformer.explained_variance_ratios
+        
+        @param x: vectors to be reduced
+        @type x: {nparray | pandas.DataFrame}
+        @param num_components: target number of components
+        @type num_components: int
+        '''
+        if type(x) == pd.DataFrame:
+            # Save the df index (i.e. row labels):
+            row_lables = x.index
+            # Extract just the numbers for the PCA:
+            x = x.values
+        else:
+            row_lables = None 
+        
+        self.transformer   = KernelPCA(num_components, kernel='linear')
+        x_transformed = self.transformer.fit_transform(x) 
+        
+        col_names = ['PCA_'+str(col_num) for col_num in range(num_components)]
+        principalDf = pd.DataFrame(data = x_transformed, columns=col_names)
+        if row_lables is not None:
+            principalDf.index = row_lables
+            
+        return principalDf  
+    
+    #--------------------------
+    # compute_tsne
+    #----------------
+    
+    def compute_tsne(self, x, num_components=2):
+        '''
+        Given a numpy matrix of row vectors, or a dataframe,
+        return the result of a tsne computation. The number of components
+        in the mapping is controlled by num_components. 
+        
+        If a dataframe is returned, with column names 
+        PCA_1, PCA_2, ... If a df was passed in, the resulting
+        df will have the same row labels (i.e. index as the
+        passed-in arg). 
+        
+        The instance var self.transformer will contain the TSNE instance.
+        So callers can examine, for example: self.transformer.explained_variance_ratios
+        
+        @param x: vectors to be reduced
+        @type x: {nparray | pandas.DataFrame}
+        @param num_components: target number of components
+        @type num_components: int
+        '''
+        if type(x) == pd.DataFrame:
+            # Save the df index (i.e. row labels):
+            row_lables = x.index
+            # Extract just the numbers for the PCA:
+            x = x.values
+        else:
+            row_lables = None 
+        
+        self.transformer   = TSNE(num_components)
+        x_transformed = self.transformer.fit_transform(x) 
+        
+        col_names = ['PCA_'+str(col_num) for col_num in range(num_components)]
+        principalDf = pd.DataFrame(data = x_transformed, columns=col_names)
         if row_lables is not None:
             principalDf.index = row_lables
             
@@ -596,9 +842,9 @@ class DimReducerByYear(DimReducerSimple):
             # Create a file name for this strm_year's PCA:
             outfile = os.path.join(pca_outdir, 'pca_vectors_%s' % strm_year)
             self.output_as_csv(reduced_dim_df, outfile)
-            self.explained_variance_ratios[strm_year] = self.pca.explained_variance_ratio_
+            self.explained_variance_ratios[strm_year] = self.transformer.explained_variance_ratio_
              
-            self.logInfo("Done pca for %s. Explained variance ratio: %s" % (strm_year, self.pca.explained_variance_ratio_))
+            self.logInfo("Done pca for %s. Explained variance ratio: %s" % (strm_year, self.transformer.explained_variance_ratio_))
             
         
     #--------------------------
@@ -672,6 +918,16 @@ if __name__ == '__main__':
                         help='if this switch is present, create separate PCAs for each year; outlocation must then be a directory',
                         action='store_true'
                         )
+    parser.add_argument('-k', '--kpca',
+                        help="if this switch is present, use kernel PCA with the argument being kernel to use.",
+                        choices=['linear','poly', 'rbf', 'sigmoid', 'cosine'],
+                        default='linear'
+                        )
+    parser.add_argument('-t', '--tsne',
+                        help="if this switch is present, compute t_sne; kpca is ignored in this case.",
+                        action='store_true',
+                        default=False
+                        )
     parser.add_argument('vectors',
                         help='file with vector embeddings.'
                         )
@@ -690,9 +946,39 @@ if __name__ == '__main__':
         # Do one PCA per strm, writing to directory outlocation:
         reducer.run(args.outlocation, COURSE_INFO_PATH)
 
+    elif args.tsne:
+        # If tsne, and vectors are higher dim than 50, need first to 
+        # reduce to ~50 via PCA dimensions, as recommended by sklearn:
+        vectors = KeyedVectors.load(args.vectors)
+        
+        if vectors.vector_size > 50:
+            reducer = DimReducerSimple(args.vectors,
+                                       num_components=50,
+                                       logFile=args.errLogFile,
+                                       )
+            reducer.run('/tmp/_intermediate_vectors50.csv')
+            
+            # Read the reduced-dim file back int a dataframe,
+            # Dropping all columns other than the vectors:
+            reducer.load_csv_to_df('/tmp/_intermediate_vectors50.csv',
+                                   reducer.pca_column_names,   # Names of just the vector columns
+                                   'CourseName'                # Name of column that holds course names
+                                   )
+                
+            # Now do the tsne:
+            reducer = DimReducerSimple('/tmp/_intermediate_vectors50.csv',
+                                       num_components=2,
+                                       tsne=True,
+                                       logFile=args.errLogFile
+                                       )
+            tsne_vectors = reducer.run(args.outlocation)    
+        
+        
     else:
         reducer = DimReducerSimple(args.vectors,
                                    num_components=args.dimensions,
+                                   pca_type=args.kpca,
+                                   tsne=args.tsne,
                                    logFile=args.errLogFile
                                    )
         reducer.run(args.outlocation)
