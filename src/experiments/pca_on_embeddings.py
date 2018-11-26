@@ -5,6 +5,7 @@ Created on Oct 30, 2018
 '''
 
 import argparse
+from enum import Enum
 import logging
 import os
 import re
@@ -17,6 +18,7 @@ from sklearn import preprocessing
 from sklearn.decomposition import KernelPCA
 from sklearn.decomposition import PCA
 from sklearn.manifold.t_sne import TSNE
+from sklearn.cluster import KMeans
 
 import numpy as np
 import pandas as pd
@@ -35,8 +37,14 @@ from utils.course_info_collector import CourseInfoCollector
 # 	      id int,
 # 	      course_code varchar(50)
 # 	      );
-COURSE_INFO_PATH = '/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/courseAvailability.sqlite'
+COURSE_AVAILABILITY_PATH = '/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/courseAvailability.sqlite3'
+COURSE_INFO_PATH         = '/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/fullEnrollmentHistory.sqlite3'
 
+class CourseVectorFilter(Enum):
+    STEM_ONLY = 'stem_only'
+    NO_STEM   = 'no_stem'
+    SUBJECTS  = 'subjects'
+    
 # List of all majors:
 class DimReducerSimple(object):
     '''
@@ -70,6 +78,9 @@ class DimReducerSimple(object):
                  num_components = 2,
                  pca_type=None,
                  tsne=False,
+                 course_filters=[],
+                 subjects=[],
+                 years=[],
                  loggingLevel=logging.INFO,
                  logFile=None,
                  ):
@@ -77,6 +88,11 @@ class DimReducerSimple(object):
         Constructor. Prepares data. This step needs to be done
         by instances of this superclass, as well as instances
         olf the DimReducerByYear subclass.
+        
+        If filter is non-None it is expected to be a member
+        of the enum CourseVectorFilter. It therefore controls whether
+        only stem, non-stem or otherwise characterized courses
+        are to be included.
         
         Initializes self.course_df, and self.num_components
                 
@@ -91,17 +107,45 @@ class DimReducerSimple(object):
         @param tsne: if True, t_sne is performed instead of pca.
             pca_type is ignored if tsne is True
         @type tsne: bool
+        @param course_filters: one enum member of CourseVectorFilter, or list of them
+        @type course_filter: {CourseVectorFilter  | [CourseVectorFilter]}
+        @param subjects: individual (course) subject, or list of subject to
+            use for filtering: only courses of given subjects will
+            be used in transformations/analyses. Only used if course_filters
+            is CourseVectorFilter.SUBJECTS. 
+        @type subjects: {str | [str]}
+        @param years: year(s) to which courses should be limited. Used in 
+            conjunction with filter CourseVectorFilter.YEAR
+        @type years: { int | [int] }
         @param loggingLevel: see Python logging module
         @type loggingLevel:
         @param logFile: log destination. Default, stdout 
         @type logFile: str
         '''
-        
 
         self.setupLogging(loggingLevel, logFile)
         
         self.pca_type = pca_type
         self.tsne     = tsne
+        
+        if type(course_filters) == CourseVectorFilter:
+            self.filters = [course_filters]
+        else:
+            self.filters = course_filters
+            
+        if type(subjects) == str:
+            self.subjects = [subjects]
+        else:
+            self.subjects = subjects
+        
+        if type(years) == int:
+            self.years = [years]
+        else:
+            self.years= years
+        
+        # Dict whose values will hold Sqlite connectors,
+        # if needed:
+        self.sqlite_conns = {}
         
         # Prepare record of explained variance for each strm:
         self.explained_variance_ratios = {}
@@ -118,6 +162,7 @@ class DimReducerSimple(object):
         # sentences, remove them for the PCA:
                             
         self.course_df = self.extract_numerics(self.course_df, majors)
+              
         
     #--------------------------
     # run 
@@ -130,13 +175,23 @@ class DimReducerSimple(object):
         and miscellaneous columns for each course.
         Writes principalDf to file.
         
-        @param pca_outfile:
-        @type pca_outfile:
+        @param pca_outfile: destination of the reduced-dimension vectors
+        @type pca_outfile: str
         '''
+        
+        self.init_sqlite3_dbs(COURSE_INFO_PATH, 'course_info_db')
+        
+        # Filter out unwanted courses:
+        for course_filter in self.filters:
+            if course_filter == CourseVectorFilter.NO_STEM or \
+               course_filter == CourseVectorFilter.STEM_ONLY:
+                self.course_df = self.vector_filter_limit_by_stem(self.course_df, years=self.years, only=course_filter)
+            elif course_filter == CourseVectorFilter.SUBJECTS:
+                self.vector_filter_limit_by_subject(self.course_df, self.subjects, years=self.years)
         
         self.principalDf = self.generate_low_dim_vecs(self.course_df, self.num_components)
         self.output_as_csv(self.principalDf, pca_outfile)
-        self.goodness_of_fit = self.goodness_of_fit(self.transformer)
+        self.explained_variance_ratios = self.goodness_of_fit(self.transformer)
 
     #--------------------------
     # goodness_of_fit 
@@ -145,7 +200,7 @@ class DimReducerSimple(object):
     def goodness_of_fit(self, transformer):
         
         if isinstance(transformer, PCA):
-            return {'allYears: %s' % transformer.explained_variance_ratio_}
+            return {'allYears' : '%s' % transformer.explained_variance_ratio_}
         else:
             return {}
      
@@ -332,6 +387,139 @@ class DimReducerSimple(object):
                     			usecols=vector_col_names.append(pd.Index([col_name_of_index_names]))
                                 )
         return course_df
+
+    #--------------------------
+    # vector_filter_limit_by_stem 
+    #----------------
+
+    def vector_filter_limit_by_stem(self, vector_df, years=[], only=CourseVectorFilter.STEM_ONLY):
+        '''
+        Given a dataframe with index of course names, return
+        another df with only courses that are either stem or
+        non-stem, depending on argument 'only'. That arg should
+        be one of 'stem' and 'non-stem'. 
+        
+        If strm_year is not none, only courses from that year are included. 
+         
+        @param vector_df: df of vectors with index being course names
+        @type vector_df: pandas.Dataframe
+        @param years: year(s) to which returned courses should be limited.
+            If empty list, all years are returned.
+        @type years: int
+        @param only: Either CourseVectorFilter.STEM_ONLY, or CourseVectorFilter.NO_STEM
+        @type only: CourseVectorFilter
+        @return: dataframe limited to either stem, or non-stem courses.
+        @rtype: pandas.Dataframe
+        '''
+        
+        # Get the courses that are or are not stem, depending
+        # on the value of 'only':
+        only_value = 1 if only == CourseVectorFilter.STEM_ONLY else 0
+        query = '''SELECT distinct course_code
+                     FROM FullEnrollmentHistory
+                    WHERE is_stem_course = %s''' % only_value
+        
+        if len(years) > 0:
+            # Make string with years out of list of years
+            years_str = ','.join([str(yr) for yr in years])
+            query += ''' and year in (%s)''' % years_str
+
+        self.logInfo("Finding courses that are %s STEM..." % ('not' if only == CourseVectorFilter.NO_STEM else ''))
+        res = self.sqlite_conns['course_info_db'].execute(query)
+        self.logInfo("Done finding courses that are %s STEM." % ('not' if only == CourseVectorFilter.NO_STEM else ''))
+        
+        # Get an array of dicts. Each dict holds the
+        # data from one row. Since we only asked for
+        # the course_code, each dict will only have
+        #   rows[x]['course_code'] == 'CHEM130' or such:
+        
+        self.logInfo('Retrieving result of STEM/NO-STEM query...')
+        rows = res.fetchall()
+        self.logInfo('Done retrieving result of STEM/NO-STEM query.')
+        
+        # Get list of courses:
+        courses = [row_dict['course_code'] for row_dict in rows]
+
+        # Subset the course vectors. Start by getting at 
+        # mask [True, False, False,...] for which rows to keep
+        # or discard:
+        
+        self.logInfo('Filtering courses, potentially keeping %s...' % len(courses))
+        row_selection_mask = vector_df.index.isin(courses)     
+        res_df = vector_df.loc[row_selection_mask,:]
+        self.logInfo('Done filtering courses, potentially keeping %s...' % len(courses))
+        
+        self.logInfo('Final number of courses retained: %s' % len(res_df))
+        return res_df
+        
+    #--------------------------
+    # vector_filter_limit_by_subject 
+    #----------------
+        
+    def vector_filter_limit_by_subject(self, vector_df, subjects, years=[]):
+        '''
+        Given a dataframe with index of course names, return
+        another df with only courses that are have one of the 
+        given subjects. 
+        
+        If strm_year is not none, only courses from that year are included. 
+         
+        @param vector_df: df of vectors with index being course names
+        @type vector_df: pandas.Dataframe
+        @param subjects: Single subject, or list of subjects, such as CS,
+            AA, EE, etc. I.e. non-numeric part of course catalog.
+        @type subjects: {str | [str]}
+        @param years: year(s) to which returned courses should be limited.
+            If None, all years are returned.
+        @type years: {int | [int]}
+        @return: dataframe limited to either stem, or non-stem courses.
+        @rtype: pandas.Dataframe
+        '''
+        
+        # Turn individual subjects into list:
+        if type(subjects) == str:
+            subjects = [str]
+            
+        # Create a string from the subjects list.
+        # Must look like this: "'CS','AA'":
+        subjects_str = "'" + "','".join(subjects) + "'"
+        
+        query = '''SELECT distinct course_code
+                     FROM FullEnrollmentHistory
+                    WHERE subject in (%s)''' % subjects_str
+        
+        if len(years) > 0:
+            # Create string from years as per 'subjects' above:
+            years_str = ','.join([str(yr) for yr in years])
+            query += ''' and year in (%s)''' % years_str
+
+        self.logInfo("Finding courses with subject(s) %s..." % subjects_str)
+        res = self.sqlite_conns['course_info_db'].execute(query)
+        self.logInfo("Done finding courses with subject(s) %s." % subjects_str)
+        
+        # Get an array of dicts. Each dict holds the
+        # data from one row. Since we only asked for
+        # the course_code, each dict will only have
+        #   rows[x]['course_code'] == 'CHEM130' or such:
+        
+        self.logInfo('Retrieving result of subject(s) query...')
+        rows = res.fetchall()
+        self.logInfo('Done retrieving result of subject(s) query.')
+        
+        # Get list of courses:
+        courses = [row_dict['course_code'] for row_dict in rows]
+
+        # Subset the course vectors. Start by getting at 
+        # mask [True, False, False,...] for which rows to keep
+        # or discard:
+        
+        self.logInfo('Filtering courses, potentially keeping %s...' % len(courses))
+        row_selection_mask = vector_df.index.isin(courses)     
+        res_df = vector_df.loc[row_selection_mask,:]
+        self.logInfo('Done filtering courses, potentially keeping %s...' % len(courses))
+        
+        self.logInfo('Final number of courses retained: %s' % len(res_df))
+        return res_df
         
     #--------------------------
     # parse_vectors_header 
@@ -629,29 +817,47 @@ class DimReducerSimple(object):
             
         return principalDf  
     
+    #--------------------------
+    # compute_kmeans 
+    #----------------
+    
+    def compute_kmeans(self, x, num_clusters=8):
+         
+        kmeans = KMeans(n_clusters=num_clusters, random_state=0)
+        x_cluster_space = kmeans.fit_transform(x)
+        print(x_cluster_space)
+        
     
     # ------------------------- Database Access ----------------    
 
     #--------------------------
-    # init_sqlite3_db 
+    # init_sqlite3_dbs 
     #----------------
 
-    def init_sqlite3_db(self, sqlite_file):
+    def init_sqlite3_dbs(self, sqlite_file_list, db_names):
         '''
-        Creates an Sqlite3 connection to the given .sqlite file.
-        Sets the connection's row_factory to sqlite3.Row, so that
+        Creates one Sqlite3 connection for each of the given .sqlite files.
+        Sets the connections' row_factory to sqlite3.Row, so that
         results will be tuples that also function as dicts, with
         keys are column names.
         
+        Arg db_names will be used as keys in the result dict. That
+        dict's values will be cursors for respective dbs.
+                
         @param sqlite_file: database file
         @type sqlite_file: str
         '''
         
-        conn = sqlite3.connect(sqlite_file)
-        conn.row_factory = sqlite3.Row
-
-        self.db_cursor = conn.cursor()
+        if type(sqlite_file_list) != list:
+            sqlite_file_list = [sqlite_file_list]
+        if type(db_names) != list:
+            db_names = [db_names]
         
+        # Get [(1,filename1),(2,filename2),(3,filename3)...]:
+        db_names_and_files = [(db_names[indx], filename) for indx,filename in enumerate(sqlite_file_list)]
+        for (conn_key_name, sqlite_filename) in db_names_and_files:
+            self.sqlite_conns[conn_key_name] = sqlite3.connect(sqlite_filename)
+            self.sqlite_conns[conn_key_name].row_factory = sqlite3.Row
 
     #--------------------------
     # courses_in_strm_year 
@@ -668,15 +874,61 @@ class DimReducerSimple(object):
         @type strm_year: {int | str}
         '''
         
-        res = self.db_cursor.execute('''SELECT course_code
-                                		  FROM CourseAvailability LEFT JOIN AllCourses
-                                		    ON course_key = id   
-                                		 WHERE strm_year = %s;''' % strm_year
+        res = self.course_availability_db.execute('''SELECT course_code
+                                		               FROM CourseAvailability LEFT JOIN AllCourses
+                                		                 ON course_key = id   
+                                		              WHERE strm_year = %s;''' % strm_year
                               )
         rows = res.fetchall()
         courses = [row['course_code'] for row in rows]
                               
         return courses
+    
+    #--------------------------
+    # course_information 
+    #----------------
+    
+    def course_information(self, course_code, strm):
+        '''
+        Given a course name, such as 'CS106A', return a
+        dict with all course information provided in table
+        FullEnrollmentHistory:
+        
+		   Emplid     
+		   major
+		   strm
+		   quarter
+		   year
+		   course_code
+		   crse_id int(11),
+		   subject
+		   offered_by_grp
+		   acad_grp
+		   course_enrollment
+		   short_descr
+		   long_descr
+		   subschool
+		   first_major
+		   second_major
+		   is_stem_course
+		   is_stem_major
+        
+        @param course_code: name of course
+        @type course_code: str
+        @param strm: quarter of the course offering
+        @type strm: int
+        @return: dict with the course info; col names are the keys.
+        @rtype: {str : str}
+        '''
+        
+        res = self.course_info_db.execute('''SELECT *
+                                		       FROM FullEnrollmentHistory
+                                		      WHERE course_code = %s and
+                                		            strm = %s''' % (course_code, strm)
+                                    )
+        res_dict = res.fetchone()
+        return res_dict
+    
     
     # ------------------------- Utilities ----------------
     
@@ -820,9 +1072,16 @@ class DimReducerByYear(DimReducerSimple):
     # run 
     #----------------
         
-    def run(self, pca_outdir, sqlite_file):
+    def run(self, pca_outdir, course_availability_file, course_info_file, db_names):
         
-        self.init_sqlite3_db(sqlite_file)
+        self.init_sqlite3_dbs([course_availability_file, course_info_file], 
+                              db_names
+                              )
+        
+        # Filter out unwanted courses:
+        if filter == CourseVectorFilter.STEM_ONLY:
+            self.course_df = self.vector_filter_limit_by_stem(self.course_df, only=filter)
+        
         # Get sequence of strm_year-years: 100, 101, 102, ...
         # Method strm_sequence() returns quarters: 1002, 1004,...
         # Divide each of these by 10, using the array element-by-element
@@ -921,7 +1180,7 @@ if __name__ == '__main__':
     parser.add_argument('-k', '--kpca',
                         help="if this switch is present, use kernel PCA with the argument being kernel to use.",
                         choices=['linear','poly', 'rbf', 'sigmoid', 'cosine'],
-                        default='linear'
+                        default=None
                         )
     parser.add_argument('-t', '--tsne',
                         help="if this switch is present, compute t_sne; kpca is ignored in this case.",
@@ -944,7 +1203,11 @@ if __name__ == '__main__':
                                    logFile=args.errLogFile
                                    )
         # Do one PCA per strm, writing to directory outlocation:
-        reducer.run(args.outlocation, COURSE_INFO_PATH)
+        reducer.run(args.outlocation, 
+                    COURSE_AVAILABILITY_PATH,
+                    COURSE_INFO_PATH,
+                    ['course_availability_db', 'course_info_db']
+                    )
 
     elif args.tsne:
         # If tsne, and vectors are higher dim than 50, need first to 
@@ -976,9 +1239,15 @@ if __name__ == '__main__':
         
     else:
         reducer = DimReducerSimple(args.vectors,
-                                   num_components=args.dimensions,
+                                   #num_components=args.dimensions,
+                                   num_components=2,
                                    pca_type=args.kpca,
                                    tsne=args.tsne,
+                                   #course_filters=CourseVectorFilter.STEM_ONLY, 
+                                   #course_filters=CourseVectorFilter.NO_STEM,
+                                   course_filters=CourseVectorFilter.SUBJECTS,
+                                   years=2015,
+                                   subjects='CS',
                                    logFile=args.errLogFile
                                    )
         reducer.run(args.outlocation)
