@@ -24,6 +24,8 @@ import numpy as np
 import pandas as pd
 from utils.constants import majors
 from utils.course_info_collector import CourseInfoCollector
+from pandas.util.testing import capture_stdout
+from sklearn.metrics.regression import explained_variance_score
 
 
 # Path to sqlite db that holds info on which courses were available
@@ -44,6 +46,13 @@ class CourseVectorFilter(Enum):
     STEM_ONLY = 'stem_only'
     NO_STEM   = 'no_stem'
     SUBJECTS  = 'subjects'
+
+class Transform(Enum):
+    PCA      = 'pca'
+    KPCA     = 'kpca'
+    TSNE     = 'tsne'
+    KMEANS   = 'kmeans'
+    WORDVECS = 'wordvecs'
     
 # List of all majors:
 class DimReducerSimple(object):
@@ -76,11 +85,12 @@ class DimReducerSimple(object):
     def __init__(self, 
                  vectors_file,
                  num_components = 2,
-                 pca_type=None,
-                 tsne=False,
+                 transform_type=Transform.PCA,
+                 transform_detail=None,
                  course_filters=[],
                  subjects=[],
                  years=[],
+                 krange=range(2,11),
                  loggingLevel=logging.INFO,
                  logFile=None,
                  ):
@@ -100,13 +110,12 @@ class DimReducerSimple(object):
         @type vectors_file: str
         @param num_components: target number of dimensions
         @type num_components: int
-        @param pca_type: if not None, KernelPCA is performed instead
-            of PCA. The argument must then be one of 
-            'linear','poly', 'rbf', 'sigmoid', or 'cosine'
-        @type pca_type: {None | str}
-        @param tsne: if True, t_sne is performed instead of pca.
-            pca_type is ignored if tsne is True
-        @type tsne: bool
+        @param transform_type: which transform or other action 
+            to perform. As in PCA, KPCA, TSNE, KMEANS...
+        @type transform_type: Transform
+        @param transform_detail: any additional info. Specifically
+            for KPCA, the kernel method: 'linear','poly', 'rbf', 'sigmoid', or 'cosine'
+        @type transform_detail: str
         @param course_filters: one enum member of CourseVectorFilter, or list of them
         @type course_filter: {CourseVectorFilter  | [CourseVectorFilter]}
         @param subjects: individual (course) subject, or list of subject to
@@ -125,8 +134,8 @@ class DimReducerSimple(object):
 
         self.setupLogging(loggingLevel, logFile)
         
-        self.pca_type = pca_type
-        self.tsne     = tsne
+        self.transform_type = transform_type
+        self.transform_detail = transform_detail
         
         if type(course_filters) == CourseVectorFilter:
             self.filters = [course_filters]
@@ -142,6 +151,10 @@ class DimReducerSimple(object):
             self.years = [years]
         else:
             self.years= years
+            
+        if krange is None:
+            raise ValueError("Range for kmeans k exploration must be absent, or an int range, but not None.")
+        self.krange = krange
         
         # Dict whose values will hold Sqlite connectors,
         # if needed:
@@ -156,8 +169,8 @@ class DimReducerSimple(object):
         
         # Number of components will be passed into a scikit learn method,
         # which expects an int; so make sure:
-        self.num_components = int(num_components)
-        
+        self.num_components = None if num_components is None else int(num_components)
+
         # If there are majors or emplids in the 
         # sentences, remove them for the PCA:
                             
@@ -170,10 +183,10 @@ class DimReducerSimple(object):
     
     def run(self, pca_outfile):
         '''
-        Assigns the PCA-reduced df to self.principalDf.
+        Assigns the result df to self.result_df.
         This df will include a column with the course names,
         and miscellaneous columns for each course.
-        Writes principalDf to file.
+        Writes result_df to file.
         
         @param pca_outfile: destination of the reduced-dimension vectors
         @type pca_outfile: str
@@ -182,25 +195,51 @@ class DimReducerSimple(object):
         self.init_sqlite3_dbs(COURSE_INFO_PATH, 'course_info_db')
         
         # Filter out unwanted courses:
+        self.filter_courses()
+        
+        if self.transform_type == Transform.WORDVECS:
+            # User just wants word2vec type KeyedVectors
+            # in a file turned into csv:
+            self.course_df.to_csv(pca_outfile, header=False)
+            return
+        else:
+            self.result_df = self.generate_low_dim_vecs(self.course_df, self.num_components)
+        self.output_as_csv(self.result_df, pca_outfile)
+        
+    #--------------------------
+    # filter_courses 
+    #----------------
+
+    def filter_courses(self):
+        '''
+        Depending on settings of self.filters, reduce the number
+        of rows in self.course_df to include only the requested
+        ones. I.e. filter by stem/no-stem, subject, ...
+        '''
         for course_filter in self.filters:
             if course_filter == CourseVectorFilter.NO_STEM or \
                course_filter == CourseVectorFilter.STEM_ONLY:
                 self.course_df = self.vector_filter_limit_by_stem(self.course_df, years=self.years, only=course_filter)
             elif course_filter == CourseVectorFilter.SUBJECTS:
-                self.vector_filter_limit_by_subject(self.course_df, self.subjects, years=self.years)
-        
-        self.principalDf = self.generate_low_dim_vecs(self.course_df, self.num_components)
-        self.output_as_csv(self.principalDf, pca_outfile)
-        self.explained_variance_ratios = self.goodness_of_fit(self.transformer)
+                self.course_df = self.vector_filter_limit_by_subject(self.course_df, self.subjects, years=self.years)
 
     #--------------------------
     # goodness_of_fit 
     #----------------
     
     def goodness_of_fit(self, transformer):
+        '''
+        If transformer is a PCA instance, return an array
+        with each dimension's explained-variance ratio. The
+        explained_variance_ratio_ attribute is an ndarray.
+        Turns that into a simple Python list.
+        
+        @param transformer: scikit transformer object, PCA or not
+        @type transformer: sklearn.manifold
+        '''
         
         if isinstance(transformer, PCA):
-            return {'allYears' : '%s' % transformer.explained_variance_ratio_}
+            return {'allYears' : '%s' % transformer.explained_variance_ratio_.tolist()}
         else:
             return {}
      
@@ -247,44 +286,50 @@ class DimReducerSimple(object):
         
         # A course-name to course-info mapper:
         crse_info_collector = CourseInfoCollector()
-        
-        if self.tsne:
+    
+        if self.transform_type == Transform.TSNE:    
             self.logInfo("Computing t_sne...")
-            principalDf = self.compute_tsne(x_matrix, num_components)
+            result_df = self.compute_tsne(x_matrix, num_components)
             self.logInfo("Done computing t_sne.")
-        elif self.pca_type is None:
+        elif self.transform_type == Transform.PCA:
             self.logInfo("Computing PCA...")
-            principalDf = self.compute_pca(x_matrix, num_components)
+            result_df = self.compute_pca(x_matrix, num_components)
             self.logInfo("Done computing PCA.")
-        else:
+        elif self.transform_type == Transform.KPCA:
             self.logInfo("Computing KernelPCA...")
-            principalDf = self.compute_kpca(x_matrix, num_components)
+            result_df = self.compute_kpca(x_matrix, num_components)
             self.logInfo("Done computing KernelPCA.")
+        elif self.transform_type == Transform.KMEANS:
+            if self.num_components is None:
+                # Search within the range provided by the 
+                # caller to the constructor:
+                self.num_components = self.find_best_k(x_matrix, self.krange)
+            result_df = self.compute_kmeans(x_matrix, self.num_components)
 
         # Add the course names as row names back in:
-        principalDf.index = course_df.index
+        result_df.index = course_df.index
         
-        # Right now, principalDf only has vector columns.
+        # Right now, result_df only has vector columns.
         # Before we add more, save the PCA_x col names:
-        self.pca_column_names = principalDf.columns 
+        self.pca_column_names = result_df.columns 
         
         # Add a column with the course names:
-        principalDf.loc[:,'CourseName'] = principalDf.index
+        result_df.loc[:,'CourseName'] = result_df.index
         
         # Add column with course subjects: CS, MS&E, PHYSICS, etc.
-        subjects = self.subjects_from_course_names(principalDf.index)
-        principalDf.loc[:,'Subject'] = subjects 
+        subjects = self.subjects_from_course_names(result_df.index)
+        result_df.loc[:,'Subject'] = subjects 
         
         # Add additional column with each course's School (acad_group):
-        acad_groups = [crse_info_collector.get_acad_grp(course_name) for course_name in principalDf.index]
-        principalDf.loc[:,'AcadGrp'] = acad_groups
+        acad_groups = [crse_info_collector.get_acad_grp(course_name) for course_name in result_df.index]
+        result_df.loc[:,'AcadGrp'] = acad_groups
         
         # Add short descriptions:
         # (NOTE: list comprehension not useable here, b/c get_course_descr()
         #        can throw KeyError.)
         
         crse_short_and_long_descr = []
-        for course_name in principalDf.index:
+        for course_name in result_df.index:
             try:
                 crse_short_and_long_descr.append(crse_info_collector.get_course_descr(course_name))
             except KeyError:
@@ -293,10 +338,10 @@ class DimReducerSimple(object):
 
         # Attach the short and long descr column to the side:
         descriptions_df = pd.DataFrame(crse_short_and_long_descr, columns=['CrseDescrShort','CrseDescrLong'])
-        descriptions_df.index = principalDf.index
-        principalDf = pd.concat([principalDf, descriptions_df], axis=1)
+        descriptions_df.index = result_df.index
+        result_df = pd.concat([result_df, descriptions_df], axis=1)
                         
-        return principalDf
+        return result_df
         
     #--------------------------
     # load_vectors 
@@ -479,6 +524,10 @@ class DimReducerSimple(object):
         # Turn individual subjects into list:
         if type(subjects) == str:
             subjects = [str]
+        
+        # If nothing to filter, do nothing:
+        if len(subjects) == 0:
+            return vector_df
             
         # Create a string from the subjects list.
         # Must look like this: "'CS','AA'":
@@ -677,12 +726,9 @@ class DimReducerSimple(object):
     def output_as_csv(self, df, output_file="/tmp/pca_output.csv"):
         if output_file is None:
             output_file = sys.stdout
-        # Create col names for each PCA dimension:
-        header = ['PCA_Dim'+str(n) for n in range(self.num_components)]
-        header.append('CrseNames')
-        header.append('CrseDescrShort')
-        header.append('CrseDescrLong')
         df.to_csv(output_file, index=False)
+        if output_file != sys.stdout:
+            self.logInfo('Ouput vectors are in file %s' % output_file)
         
     #--------------------------
     # subjects_from_course_names 
@@ -729,11 +775,13 @@ class DimReducerSimple(object):
         self.transformer = PCA(n_components=num_components)
         principalComponents = self.transformer.fit_transform(x)
         col_names = ['PCA_'+str(col_num) for col_num in range(num_components)]
-        principalDf = pd.DataFrame(data = principalComponents, columns=col_names)
+        result_df = pd.DataFrame(data = principalComponents, columns=col_names)
         if row_lables is not None:
-            principalDf.index = row_lables
+            result_df.index = row_lables
             
-        return principalDf  
+        self.explained_variance_ratios = self.goodness_of_fit(self.transformer)
+            
+        return result_df  
     
     #--------------------------
     # compute_kpca 
@@ -746,7 +794,7 @@ class DimReducerSimple(object):
         in the mapping is controlled by num_components. 
         
         If a dataframe is returned, with column names 
-        PCA_1, PCA_2, ... If a df was passed in, the resulting
+        KPCA_1, KPCA_2, ... If a df was passed in, the resulting
         df will have the same row labels (i.e. index as the
         passed-in arg). 
         
@@ -769,12 +817,12 @@ class DimReducerSimple(object):
         self.transformer   = KernelPCA(num_components, kernel='linear')
         x_transformed = self.transformer.fit_transform(x) 
         
-        col_names = ['PCA_'+str(col_num) for col_num in range(num_components)]
-        principalDf = pd.DataFrame(data = x_transformed, columns=col_names)
+        col_names = ['KPCA_'+str(col_num) for col_num in range(num_components)]
+        result_df = pd.DataFrame(data = x_transformed, columns=col_names)
         if row_lables is not None:
-            principalDf.index = row_lables
+            result_df.index = row_lables
             
-        return principalDf  
+        return result_df  
     
     #--------------------------
     # compute_tsne
@@ -787,7 +835,7 @@ class DimReducerSimple(object):
         in the mapping is controlled by num_components. 
         
         If a dataframe is returned, with column names 
-        PCA_1, PCA_2, ... If a df was passed in, the resulting
+        TSNE_1, TSNE_2, ... If a df was passed in, the resulting
         df will have the same row labels (i.e. index as the
         passed-in arg). 
         
@@ -810,12 +858,12 @@ class DimReducerSimple(object):
         self.transformer   = TSNE(num_components)
         x_transformed = self.transformer.fit_transform(x) 
         
-        col_names = ['PCA_'+str(col_num) for col_num in range(num_components)]
-        principalDf = pd.DataFrame(data = x_transformed, columns=col_names)
+        col_names = ['TSNE_'+str(col_num) for col_num in range(num_components)]
+        result_df = pd.DataFrame(data = x_transformed, columns=col_names)
         if row_lables is not None:
-            principalDf.index = row_lables
+            result_df.index = row_lables
             
-        return principalDf  
+        return result_df  
     
     #--------------------------
     # compute_kmeans 
@@ -823,11 +871,91 @@ class DimReducerSimple(object):
     
     def compute_kmeans(self, x, num_clusters=8):
          
-        kmeans = KMeans(n_clusters=num_clusters, random_state=0)
+        if num_clusters is None:
+            kmeans = KMeans(random_state=0)
+        else:
+            kmeans = KMeans(n_clusters=num_clusters, random_state=0)
         x_cluster_space = kmeans.fit_transform(x)
-        print(x_cluster_space)
         
+        # Remember the score:
+        self.recent_kmeans_score = kmeans.inertia_
+        
+        col_names = ['KMEANS_'+str(col_num) for col_num in range(kmeans.get_params()['n_clusters'])]
+        
+        return pd.DataFrame(x_cluster_space, columns=col_names, index=self.course_df.index)
+        
+    #--------------------------
+    # find_best_k 
+    #----------------
+        
+    def find_best_k(self, x, search_range=range(2,11)):
+        '''
+        Given a raw array, find the best k for
+        kmeans by repeating until *****
+        
+        @param x: vectors
+        @type x: np.array
+        '''
+        
+        self.kmeans_costs = []
+        self.logInfo('Finding best k for k means in range %s...' % str(search_range))
+        for k in search_range:
+            self.compute_kmeans(x, k)
+            self.kmeans_costs.append(self.kmeans_score())
+        self.logInfo('Done finding best k for k means in range %s...' % str(search_range))
+        print(self.kmeans_costs)
+        
+    #--------------------------
+    # kmeans_score 
+    #----------------
+
+    def kmeans_score(self):
+        '''
+        To be called after a Kmeans computation. Returns the
+        score of the fit. That's the sum of squares of distances
+        of data points from their centers.
+        '''
+        
+        try:
+            return self.recent_kmeans_score
+        except Exception:
+            self.logErr('No prior Kmeans computation; therefore no kmeans score available.')
+        
+    #--------------------------
+    # pca_explained_var_ratio_csv 
+    #----------------
     
+    def pca_explained_var_ratio_csv(self, explained_var_ratios, outfile=None):
+        '''
+        Given an array of explained-variance ratios, 
+        output a csv of the form:
+        
+               1, ratio1
+               2, ratio2
+               3, ratio3,
+                 ...
+        
+        The output is useful to find an 'elbow' in the sequence
+        of dimensions, where a reasonable dimension cutoff can be made.
+         
+        @param explained_var_ratios: variance ratios
+        @type explained_var_ratios: {[float] | {'allYears' : [float]}
+        @param outfile: {None | file path}
+        @type outfile: str
+        '''
+        if outfile is None:
+            outfile = sys.stdout
+        if self.transform_type != Transform.PCA:
+            raise TypeError("Transformer is not a PCA instance.")
+        explained_ratios_ndarray = self.transformer.explained_variance_ratio_
+        cumsum_ndarray = np.array(explained_ratios_ndarray.cumsum())
+        res_df = pd.DataFrame({'ExplainedVarianceRatio': explained_ratios_ndarray,
+                               'CumulativeExplainedVarianceRatio': cumsum_ndarray
+                               },
+                               index=range(len(explained_ratios_ndarray))
+                               )
+        res_df.to_csv(outfile, header=True, index=True, index_label='DimIndex')
+        
     # ------------------------- Database Access ----------------    
 
     #--------------------------
@@ -1173,28 +1301,46 @@ if __name__ == '__main__':
                         help='number of PCA dimensions to reduce to; default: 2',
                         default=2
                         )
-    parser.add_argument('-y', '--years',
-                        help='if this switch is present, create separate PCAs for each year; outlocation must then be a directory',
+    parser.add_argument('-a', '--allyears',
+                        help='if this switch is present, create separate transforms for each year; outlocation must then be a directory',
                         action='store_true'
                         )
-    parser.add_argument('-k', '--kpca',
+    parser.add_argument('-y', '--years',
+                        nargs='*',
+                        help='Years to be included in the transforms. Other years are ignored.',
+                        )
+    parser.add_argument('-t', '--transform',
+                        help="type of transform to use: 'pca', 'kpca', 'tsne', 'kmeans",
+                        choices=['pca','kpca', 'tsne', 'kmeans', 'wordvecs'],
+                        default='pca'
+                        )
+    parser.add_argument('-p', '--tsneprepca',
+                        type=int,
+                        help='If provided, supplies the number of dimensions to which\n' +\
+                             'a PCA preprocesses Tsne input vectors.',
+                        default=None
+                        )
+    parser.add_argument('-k', '--kpcakernel',
                         help="if this switch is present, use kernel PCA with the argument being kernel to use.",
                         choices=['linear','poly', 'rbf', 'sigmoid', 'cosine'],
                         default=None
                         )
-    parser.add_argument('-t', '--tsne',
-                        help="if this switch is present, compute t_sne; kpca is ignored in this case.",
-                        action='store_true',
-                        default=False
+    parser.add_argument('-r', '--krange',
+                        nargs=2,
+                        help='Range where to explore k for kmeans: 2 numbers, excl. top number. Default [2-11)',
+                        default=[2,11]
                         )
     parser.add_argument('vectors',
                         help='file with vector embeddings.'
                         )
 
     args = parser.parse_args();
+
+    # Turn the kmeans range into a Python 3 range iterator:    
+    krange = range(args.krange[0], args.krange[1])
     
     #reducer = DimReducerSimple('/Users/paepcke/EclipseWorkspacesNew/pathways/src/data/Word2vec/winning_model.model')
-    if args.years:
+    if args.allyears:
         if not os.path.isdir(args.outlocation):
             print("Outlocation must be a directory; nothing done.")
             sys.exit()
@@ -1209,49 +1355,62 @@ if __name__ == '__main__':
                     ['course_availability_db', 'course_info_db']
                     )
 
-    elif args.tsne:
+    elif args.transform == 'tsne' and args.tsneprepca is not None:
+        
+        # The commented block below does a PCA down to 50
+        # dimensions before the TSNE. That's recommended on 
+        # some Web page. But using all 150 or so dims seems OK:
+        
         # If tsne, and vectors are higher dim than 50, need first to 
         # reduce to ~50 via PCA dimensions, as recommended by sklearn:
         vectors = KeyedVectors.load(args.vectors)
-        
-        if vectors.vector_size > 50:
-            reducer = DimReducerSimple(args.vectors,
-                                       num_components=50,
-                                       logFile=args.errLogFile,
-                                       )
-            reducer.run('/tmp/_intermediate_vectors50.csv')
-            
-            # Read the reduced-dim file back int a dataframe,
-            # Dropping all columns other than the vectors:
-            reducer.load_csv_to_df('/tmp/_intermediate_vectors50.csv',
-                                   reducer.pca_column_names,   # Names of just the vector columns
-                                   'CourseName'                # Name of column that holds course names
-                                   )
-                
-            # Now do the tsne:
-            reducer = DimReducerSimple('/tmp/_intermediate_vectors50.csv',
-                                       num_components=2,
-                                       tsne=True,
-                                       logFile=args.errLogFile
-                                       )
-            tsne_vectors = reducer.run(args.outlocation)    
-        
-        
-    else:
+         
         reducer = DimReducerSimple(args.vectors,
-                                   #num_components=args.dimensions,
-                                   num_components=2,
-                                   pca_type=args.kpca,
-                                   tsne=args.tsne,
-                                   #course_filters=CourseVectorFilter.STEM_ONLY, 
-                                   #course_filters=CourseVectorFilter.NO_STEM,
-                                   course_filters=CourseVectorFilter.SUBJECTS,
-                                   years=2015,
-                                   subjects='CS',
-                                   logFile=args.errLogFile
+                                   transform_type=Transform.PCA,
+                                   num_components=args.tsneprepca,
+                                   logFile=args.errLogFile,
                                    )
-        reducer.run(args.outlocation)
+        reducer.run('/tmp/_intermediate_vectors50.csv')
+        # The input vectors for the tsne are now this intermediate
+        # file
+        args.vectors = '/tmp/_intermediate_vectors50.csv'
 
-    reducer.logInfo("Explained variance ratio(s): %s" % reducer.explained_variance_ratios)
+    # Create proper enum values for the desired transform:
+    if args.transform == 'pca':
+        transform_type = Transform.PCA
+    elif args.transform == 'kpca':
+        transform_type = Transform.KPCA
+    elif args.transform == 'kmeans':
+        transform_type = Transform.KMEANS
+    elif args.transform == 'tsne':
+        transform_type = Transform.TSNE
+    elif args.transform == 'wordvecs':
+        transform_type = Transform.WORDVECS
+    else:
+        raise(ValueError('Unknown transform: %s' % args.transform))
+    
+    reducer = DimReducerSimple(args.vectors,
+                               num_components=args.dimensions,
+                               #num_components=None,            # Let kmeans determine clusters
+                               transform_type=transform_type,
+                               #course_filters=CourseVectorFilter.STEM_ONLY, 
+                               #course_filters=CourseVectorFilter.NO_STEM,
+                               course_filters=CourseVectorFilter.SUBJECTS,
+                               years=[],
+                               subjects=[],
+                               #krange=args.krange,
+                               #krange=range(20,31),
+                               logFile=args.errLogFile
+                               )
+    reducer.run(args.outlocation)
+
+    # Some transform-specific post processing:
+    if args.transform == 'pca':
+        explained_variance_ratios = reducer.explained_variance_ratios
+        reducer.pca_explained_var_ratio_csv(reducer.explained_variance_ratios, '/tmp/pca_variance_ratios.csv')
+        reducer.logInfo("Explained variance ratios are in /tmp/pca_variance_ratios.csv")
+    elif args.transform == 'kmeans':
+        reducer.logInfo('KMeans score: %s.' % reducer.kmeans_score())
+        
 
             
