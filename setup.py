@@ -26,6 +26,7 @@ setup(
                         'pysqlite3>=0.2.0',
                         'configparser>=3.3.0',
                         'MulticoreTSNE>=0.0.1.1',
+                        'requests>=2.21.0',
                         ],
 
     #dependency_links = ['https://github.com/DmitryUlyanov/Multicore-TSNE/tarball/master#egg=package-1.0']

@@ -97,10 +97,10 @@ class ExploreCoursesGetter(object):
 if __name__ == '__main__':
     ec_conn = ExploreCoursesGetter()
     
-    years = ['2012-2013', '2013-2014', '2014-2015', '2016-2017', '2017-2018', '2018-2019']
+    years = ['20122013', '20132014', '20142015', '20162017', '20172018', '20182019']
     
-    with open('/tmp/course_instructors.csv', 'w') as out_fd:
-        csv_writer = csv.writer(out_fd) 
+    with open('/tmp/course_instructors.tsv', 'w') as out_fd:
+        csv_writer = csv.writer(out_fd, delimiter='\t') 
         # Column header:
         csv_writer.writerow(['year', 'course_code', 'instructors'])
          
