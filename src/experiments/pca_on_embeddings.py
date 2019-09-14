@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from utils.constants import majors
 from utils.course_info_collector import CourseInfoCollector
-from pandas.util.testing import capture_stdout
+#from pandas.util.testing import capture_stdout
 from sklearn.metrics.regression import explained_variance_score
 
 

@@ -23,9 +23,18 @@ class DotManager(object):
     # __init__
     #------------------
 
-    def __init__(self, lower_left, upper_right, picker_radius, grid_edge_len=10):
+    def __init__(self, lower_left, upper_right, picker_radius=4, grid_edge_len=10):
         '''
-        Constructor
+        
+        @param lower_left: lower left corner of area of interest
+        @type lower_left: (int,int)
+        @param upper_right: upper right corner of area of interest
+        @type upper_right: (int,int)
+        @param picker_radius: x and y distance away from a given point
+            that we include already rendered artists in the 'glob' of dots
+        @type picker_radius: int
+        @param grid_edge_len: sides of grid that is placed over the plane
+        @type grid_edge_len: int
         '''
         
         self.picker_radius = picker_radius
@@ -223,8 +232,15 @@ class DotManager(object):
             # Get the already existing rendered artist
             # at this spot. It's the first in the list
             # of dots at xy:
-            rendered_artist_at_xy = dot_dict[fuzzy_match][0]
-            self.stacked_dots_dict[rendered_artist_at_xy].append(dot_artist_obj)
+            if fuzzy_match is None:
+                rendered_artist_at_xy = dot_dict[(x,y)][0]
+            else:
+                rendered_artist_at_xy = dot_dict[fuzzy_match][0]
+            try:
+                self.stacked_dots_dict[rendered_artist_at_xy].append(dot_artist_obj)
+            except KeyError:
+                # First artist here:
+                self.stacked_dots_dict[rendered_artist_at_xy] = [dot_artist_obj]
 
     #--------------------------------
     # pseudo_artists_with_rendered 

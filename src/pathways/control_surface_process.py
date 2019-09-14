@@ -9,15 +9,13 @@ import os
 from queue import Empty
 import sys
 
-from PySide2.QtCore import QFile, QTimer
-from PySide2.QtUiTools import QUiLoader
-from PySide2.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox, QFileDialog
+from PyQt5.QtCore import QFile, QTimer 
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QCheckBox 
+from PyQt5.QtWidgets import QFileDialog, QMessageBox, QMainWindow, QTextEdit
+from PyQt5.QtWidgets import QPushButton, QLineEdit
+from PyQt5 import uic
 
-#from PySide2.QtWidgets import qApp 
-#from PySide2.QtCore import Qt
-
-from pathways.common_classes import Message
-from PyQt5.Qt import QMessageBox
+from common_classes import Message
 
 class ControlSurface(object):
     '''
@@ -67,11 +65,11 @@ class ControlSurface(object):
         
         self.synchronizing = False
 
-        self.app = QApplication()
+        self.app = QApplication(sys.argv)
         self.control_surface_widget = ContainerWidget(self.ui_file)
         
         # Convenience pointer to the course display board:
-        self.crse_board = self.control_surface_widget.widget.infoDisplay       
+        self.crse_board = self.control_surface_widget.findChild(QTextEdit,'infoDisplay')   
 
         self.connect_signals()         
         self.control_surface_widget.show()
@@ -89,39 +87,39 @@ class ControlSurface(object):
         
     def connect_signals(self):
         
-        whereIsButton = self.control_surface_widget.widget.whereIsButton
+        whereIsButton = self.control_surface_widget.findChild(QPushButton, 'whereIsButton')
         whereIsButton.clicked.connect(self.slot_where_is_btn)
         
-        top10Button = self.control_surface_widget.widget.top10Button
+        top10Button = self.control_surface_widget.findChild(QPushButton, 'top10Button')
         top10Button.clicked.connect(self.slot_top10_btn)
         
-        enrollHistoryButton = self.control_surface_widget.widget.enrollmentButton
+        enrollHistoryButton = self.control_surface_widget.findChild(QPushButton, 'enrollmentButton')
         enrollHistoryButton.clicked.connect(self.slot_enrollment_history_btn)
         
-        recompButton = self.control_surface_widget.widget.recomputeButton
+        recompButton = self.control_surface_widget.findChild(QPushButton, 'recomputeButton')
         recompButton.clicked.connect(self.slot_recompute_btn)
         
-        quitBtn = self.control_surface_widget.widget.quitBtn
+        quitBtn = self.control_surface_widget.findChild(QPushButton, 'quitBtn')
         quitBtn.clicked.connect(self.slot_quit_btn)
         
-        clrBtn = self.control_surface_widget.widget.clrBoardButton
+        clrBtn = self.control_surface_widget.findChild(QPushButton, 'clrBoardButton')
         clrBtn.clicked.connect(self.clear_msg_board)
         
-        saveBtn = self.control_surface_widget.widget.saveVizButton
+        saveBtn = self.control_surface_widget.findChild(QPushButton, 'saveVizButton')
         saveBtn.clicked.connect(self.slot_save_viz_btn)
 
-        restoreBtn = self.control_surface_widget.widget.loadVizButton
+        restoreBtn = self.control_surface_widget.findChild(QPushButton, 'loadVizButton')
         restoreBtn.clicked.connect(self.slot_restore_viz_btn)
         
         # Remember the checkbox objects for easy reference:
         self.chk_box_obj_dict = {}
         
         for chkBox_name in self.chkBox_names_acad_groups:
-            chkBox_obj = self.control_surface_widget.widget.findChild(QCheckBox, chkBox_name)
+            chkBox_obj = self.control_surface_widget.findChild(QCheckBox, chkBox_name)
             self.connect_chk_box(chkBox_obj, self.slot_acad_grp_chk)
         
         # The draft mode checkbox:
-        draft_chk_box_obj = self.control_surface_widget.widget.findChild(QCheckBox, 'draftModeChk')
+        draft_chk_box_obj = self.control_surface_widget.findChild(QCheckBox, 'draftModeChk')
         self.connect_chk_box(draft_chk_box_obj, self.slot_draft_mode)
         
         
@@ -158,7 +156,12 @@ class ControlSurface(object):
         self.write_to_main('enrollment_history', course_name)
     
     def slot_recompute_btn(self):
-        if self.user_confirms('Recomputation can take up to 20 minutes', 'Do it?'):
+        # If high quality mode, recomputation can take a while:
+        if not self.chk_box_obj_dict['draftModeChk'].isChecked():
+            if self.user_confirms('Recomputation can take up to 20 minutes', 'Do it?'):
+                self.write_to_main('recompute', None)
+        else:
+            # In draft mode things don't take that long:
             self.write_to_main('recompute', None)
         
     def slot_save_viz_btn(self):
@@ -169,13 +172,16 @@ class ControlSurface(object):
         
     def slot_restore_viz_btn(self):
         # Get file name from user:
-        filename, _ = QFileDialog.getOpenFileName(
-                            caption='Select viz file...',
-                            dir=ControlSurface.DEFAULT_CACHE_FILE_DIR,
-                            filter='*.pickle'
-                            )
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        filename, _ = QFileDialog.getOpenFileName(parent=self.control_surface_widget,
+                                                  caption='Select viz file...',
+                                                  directory=ControlSurface.DEFAULT_CACHE_FILE_DIR,
+                                                  filter='*.pickle',
+                                                  options=options)
         
-        self.write_to_main('restore_viz', filename)
+        if filename is not None:
+            self.write_to_main('restore_viz', filename)
         
         
     def slot_quit_btn(self):
@@ -239,7 +245,7 @@ class ControlSurface(object):
             block capitalized, and spaces removed.
         @rtype: str
         '''
-        course_name_input = self.control_surface_widget.widget.CourseInput
+        course_name_input = self.control_surface_widget.findChild(QLineEdit, 'CourseInput')
         course_name = course_name_input.text()
         if len(course_name) == 0:
             self.user_info('Enter a course name such as MATH51 in the course name box first.')
@@ -283,7 +289,7 @@ class ControlSurface(object):
         elif msg_code == 'raise':
             # Being asked to raise our window to the top
             # (above the viz window):
-            # main_window_widget = self.control_surface_widget.widget.findChild(QWidget, 'MainWindow')
+            # main_window_widget = self.control_surface_widget.findChild(QWidget, 'MainWindow')
             # main_window_widget.activateWindow()
             # main_window_widget.raise_()
             pass
@@ -404,21 +410,15 @@ class ControlSurface(object):
             msg_box.setDefaultButton(QMessageBox.Cancel)
         return msg_box.exec_() == QMessageBox.Ok
         
-        
-class ContainerWidget(QWidget):
 
+class ContainerWidget(QMainWindow):
     def __init__(self, ui_file):
-        super().__init__()
-        self.loader = QUiLoader()
-        q_file = QFile(ui_file)
-        q_file.open(QFile.ReadOnly)
-        self.widget = self.loader.load(q_file)
-        q_file.close()
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.widget)
-        self.setLayout(layout)
-
+        super(ContainerWidget, self).__init__() # Call the inherited classes __init__ method
+        uic.loadUi(ui_file, self) # Load the .ui file
+        #self.show() # Show the GUI
+        #layout = QVBoxLayout()
+        #layout.addWidget(self.widget)
+        #self.setLayout(layout)
     
 if __name__ == '__main__':
     ui_dir   = os.path.join(os.path.dirname(__file__), '../qtui/')

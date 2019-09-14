@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 '''
 Created on Aug 19, 2018
 
@@ -11,10 +12,10 @@ from queue import Empty  # The regular queue's empty exception
 import sys
 from time import sleep
 
-from pathways.common_classes import Message
-from pathways.control_surface_process import ControlSurface
-from pathways.course_tsne_visualization import TSNECourseVisualizer
-from pathways.course_vector_creation import CourseVectorsCreator
+from common_classes import Message
+from control_surface_process import ControlSurface
+from course_tsne_visualization import TSNECourseVisualizer
+from course_vector_creation import CourseVectorsCreator
 
 
 class TsneCourseExplorer(object):

@@ -9,7 +9,7 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
-from pathways.strmComputer import StrmComputer 
+from strmComputer import StrmComputer 
 
 
 class EnrollmentPlotter(object):

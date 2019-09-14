@@ -22,6 +22,10 @@ class ExploreCoursesGetter(object):
     project referenced from this one. 
     '''
 
+    # Some courses have 50 and more instructors (e.g. MED courses).
+    # Set this number to the upper limit, or None if no limit:
+    MAX_INSTRUCTORS = 20
+
     #------------------------------------
     # Constructor 
     #-------------------    
@@ -40,15 +44,16 @@ class ExploreCoursesGetter(object):
     
     def get_all_instructors(self, year):
 
-        course_instr_dict = {}
+        course_info_arr = []
 
         for school in self.connection.get_schools(year):
             for dept in school.departments:
                 courses = self.connection.get_courses_by_department(dept.code, year=year)
                 for course in courses:
-                    course_instr_dict[course.subject + course.code] = self.course_instructors(course)
+                    course_info = CourseInfo(year, course.subject + course.code, course.course_id, self.course_instructors(course))
+                    course_info_arr.append(course_info)
                     
-        return course_instr_dict
+        return course_info_arr
         
     #------------------------------------
     # course_instructors 
@@ -93,7 +98,26 @@ class ExploreCoursesGetter(object):
                 courses = self.connection.get_courses_by_department(dept.code, year=year)
                 for course in courses:
                     print(course)
+
+# ---------------------------------- Class CourseInfo -------------------------
+
+class CourseInfo(object):
+    
+    def __init__(self, year, course_code, course_id, instructors):
+        self.course_code = course_code
+        self.course_id = course_id
+        if ExploreCoursesGetter.MAX_INSTRUCTORS is None:
+            self.instructors = ','.join(instructors)
+        else:
+            self.instructors = ','.join(instructors[:ExploreCoursesGetter.MAX_INSTRUCTORS])
         
+        # Make the year more readable: From 20132014 ==> 2013-2014
+        self.year = year[:4] + '-' + year[4:]
+        
+    def as_array(self):
+        return [self.year, self.course_code, self.course_id, self.instructors] 
+        
+# --------------------------------------------- Main --------------------------        
 if __name__ == '__main__':
     ec_conn = ExploreCoursesGetter()
     
@@ -102,14 +126,14 @@ if __name__ == '__main__':
     with open('/tmp/course_instructors.tsv', 'w') as out_fd:
         csv_writer = csv.writer(out_fd, delimiter='\t') 
         # Column header:
-        csv_writer.writerow(['year', 'course_code', 'instructors'])
+        csv_writer.writerow(['year', 'course_code', 'course_id', 'instructors'])
          
         for year in years:
             print('Retrieving year %s...' % year)
-            course_dict = ec_conn.get_all_instructors(year)
+            course_info_objs = ec_conn.get_all_instructors(year)
             print('Retrieved all for year %s.' % year)
             print('Start writing year %s to .csv...' % year)
     
-            for course_code in course_dict.keys():
-                row = [year, course_code, ','.join(course_dict[course_code])]
+            for course_info_obj in course_info_objs:
+                row = course_info_obj.as_array()
                 csv_writer.writerow(row)

@@ -1,15 +1,17 @@
 #!/usr/bin/env python
 
+# Sep 13, 2017 Andreas Paepcke: ported to Python 3.7
 # Needs:
 #   o gensim
 #   o nltk
 
 import json
-import urlparse
+from urllib import parse 
 from itertools import chain
 flatten = chain.from_iterable
 
-from nltk import word_tokenize
+#***from nltk import word_tokenize
+from nltk.tokenize.punkt import PunktLanguageVars
 
 from gensim.corpora import Dictionary
 from gensim.models.ldamodel import LdaModel
@@ -23,7 +25,7 @@ def url_away(tweet):
     string = []
     for word in tweet.split():
         try:
-            scheme, netloc, path, params, query, fragment = urlparse.urlparse(word)
+            scheme, netloc, path, _params, _query, _fragment = parse.urlparse(word)
         except ValueError:
             continue
         if scheme or netloc:
@@ -35,7 +37,7 @@ def url_away(tweet):
 def featurize(tweet):
     tweet = tweet.lower()
     tweet = url_away(tweet)
-    tokens = word_tokenize(tweet)
+    tokens = PunktLanguageVars.word_tokenize(tweet)
     tokens = filter(lambda x: len(x) > 2, tokens)
     return tokens
 
@@ -72,7 +74,9 @@ for i in range(0, n_topics):
     terms = []
     for term in temp:
         terms.append(term)
-    print "Top 10 terms for topic #" + str(i) + ": "+ ", ".join([i[1] for i in terms])
+    # Original 2.7:
+    #print "Top 10 terms for topic #" + str(i) + ": "+ ", ".join([i[1] for i in terms])
+    print(f"Top 10 terms for topic #{str(i)}: {','.join([i[1] for i in terms])}")
 
 '''
 Top 10 terms for topic #0: expected, rep, announces, over, looks, ktvu, want, like, guys, will
@@ -82,7 +86,7 @@ Top 10 terms for topic #3: today, killed, sanfranmag, hopes, ave, expect, delays
 '''
 
 ## word clouds
-from os import path
+#from os import path
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 
@@ -102,7 +106,7 @@ from sklearn.feature_extraction import DictVectorizer
 
 def topics_to_vectorspace(n_topics, n_words=100):
     rows = []
-    for i in xrange(n_topics):
+    for i in range(n_topics):
         temp = lda.show_topic(i, n_words)
         row = dict(((i[1],i[0]) for i in temp))
         rows.append(row)
@@ -123,7 +127,7 @@ pca = PCA(n_components=2)
 X_pca = pca.fit(X.toarray()).transform(X.toarray())
 
 plt.figure()
-for i in xrange(X_pca.shape[0]):
+for i in range(X_pca.shape[0]):
     plt.scatter(X_pca[i, 0], X_pca[i, 1], alpha=.5)
     plt.text(X_pca[i, 0], X_pca[i, 1], s=' ' + str(i))    
 
@@ -217,8 +221,8 @@ cor = squareform(pdist(X_pca_norm, metric="euclidean"))
 
 G = nx.Graph()
 
-for i in xrange(cor.shape[0]):
-    for j in xrange(cor.shape[1]):
+for i in range(cor.shape[0]):
+    for j in range(cor.shape[1]):
         if i == j:
             G.add_edge(i, j, {"weight":0})
         else:

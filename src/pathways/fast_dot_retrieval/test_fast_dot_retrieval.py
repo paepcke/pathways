@@ -4,10 +4,16 @@ Created on Sep 19, 2018
 @author: paepcke
 '''
 import unittest
+import os
 
-from fast_dot_retrieval.fast_dot_retrieval import DotManager
+if os.getenv('ECLIPSE') == '1':
+    from fast_dot_retrieval import DotManager
+else:
+    # Works in shell, but complains in Eclipse
+    from .fast_dot_retrieval import DotManager
 
 TEST_ALL = True
+#TEST_ALL = False
 
 class TestFastDotRetrieval(unittest.TestCase):
 
@@ -54,6 +60,7 @@ class TestFastDotRetrieval(unittest.TestCase):
     # test_non_origin_manager 
     #------------------
 
+    @unittest.skipIf(not TEST_ALL, 'Temporarily skipped')
     def test_non_origin_manager(self):
 
         man = DotManager((10,0),(50,20))      

@@ -1,18 +1,21 @@
+#!/usr/bin/env python
 '''
 @author: paepcke
 
 NOTE: had to:
-   cp /Users/paepcke/anaconda2/envs/pathwaysPy3_7/lib/python3.7/site-packages/MulticoreTSNE/libtsne_multicore.so   multicoretsne/MulticoreTSNE/
+   cp /Users/paepcke/anaconda2/envs/pathwaysPy3_7/lib/python3.7/site-packages/MulticoreTSNE/libtsne_multicore.so   \
+            src/pathways/multicoretsne/MulticoreTSNE/
 after  
    pip3 install MulticoreTSNE
    
 in MulticoreTSNE's parent dir  
 
 NOTE: for Eclipse to find PyQt5.sip I had to:
-   cp PyQt5_sip-4.19.12-py3.7-macosx-10.7-x86_64.egg/PyQt5/sip.so PyQt5-5.11.2-py3.7-macosx-10.7-x86_64.egg/PyQt5/
- 
+   pushd ~/anaconda3/envs/pathways/lib/python3.7/site-packages/PyQt5-5.13.1-py3.7-macosx-10.7-x86_64.egg/PyQt5/ 
+   ln -s ../../PyQt5/sip.so .
 '''
 
+import argparse
 from collections import OrderedDict
 import csv
 from enum import Enum
@@ -31,12 +34,8 @@ import sys
 from threading import Timer
 import time
 
-import matplotlib
-# Backend spec must be before pyplot import!
-#matplotlib.use('TkAgg')
-matplotlib.use('Qt5Agg')
-
 from matplotlib import artist
+import matplotlib
 from matplotlib.path import Path
 
 from fast_dot_retrieval.fast_dot_retrieval import DotManager
@@ -44,18 +43,17 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from multicoretsne import  MulticoreTSNE as TSNE
 import numpy as np
-from pathways.color_constants import colors
-from pathways.common_classes import Message
-from pathways.course_sim_analytics import CourseSimAnalytics
-from pathways.course_vector_creation import CourseVectorsCreator
-from pathways.enrollment_plotter import EnrollmentPlotter
-from pathways.difficulty_plotter import DifficultyPlotter
-
-#from pathways.Old.tsne_viz_process import TsneViz
+from color_constants import colors
+from common_classes import Message
+from course_sim_analytics import CourseSimAnalytics
+from course_vector_creation import CourseVectorsCreator
+from difficulty_plotter import DifficultyPlotter
+from enrollment_plotter import EnrollmentPlotter
 
 
+# Backend spec must be before pyplot import!
+matplotlib.use('Qt5Agg')
 
-#from multiprocessing import Queue
 logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
 class RestartRequest(Exception):
@@ -2365,12 +2363,26 @@ class PseudoDotArtist(object):
 
 # ----------------------------------------------- Main -------------------
 if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(prog=os.path.basename(sys.argv[0]),
+                                     formatter_class=argparse.RawTextHelpFormatter,
+                                     description="Show Tsne projection of Stanford courses"
+                                     )
+
+    parser.add_argument('-d', '--draft',
+                        help='Operate in full mode, instead of draft (slower). Default: draft',
+                        action='store_true',
+                        default=True
+                        );
+
+    args = parser.parse_args();
+    
     vector_creator = CourseVectorsCreator()
     data_dir = os.path.join(os.path.dirname(__file__), '../data/')
     vector_creator.load_word2vec_model(os.path.join(data_dir, 'best_modelvec250_win15.model'))
     visualizer = TSNECourseVisualizer(vector_creator,  #@UnusedVariable
                                       in_queue=None, 
                                       out_queue=None, 
-                                      draft_mode=True)
+                                      draft_mode=args.draft)
     print('Visualizer exited.')
     
